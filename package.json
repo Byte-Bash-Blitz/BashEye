@@ -8,14 +8,21 @@
     "dev": "nodemon bot.js"
   },
   "dependencies": {
-    "discord.js": "^14.14.1",
     "@supabase/supabase-js": "^2.39.0",
-    "dotenv": "^16.3.1"
+    "cors": "^2.8.5",
+    "discord.js": "^14.14.1",
+    "dotenv": "^16.3.1",
+    "express": "^4.21.2"
   },
   "devDependencies": {
     "nodemon": "^3.0.2"
   },
-  "keywords": ["discord", "bot", "progress", "tracking"],
+  "keywords": [
+    "discord",
+    "bot",
+    "progress",
+    "tracking"
+  ],
   "author": "Byte-Bash-Blitz Team",
   "license": "MIT"
 }
