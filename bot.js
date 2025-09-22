@@ -306,7 +306,7 @@ async function handleMessage(message) {
         return;
     }
 
-    // Check if message has at least 50 words
+    // Check if message has at least 40 words
     const wordCount = countWords(message.content);
     if (wordCount < MIN_WORD_COUNT) {
         console.log(`❌ Message from ${message.author.username} has only ${wordCount} words (minimum: ${MIN_WORD_COUNT})`);

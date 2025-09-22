@@ -1,0 +1,216 @@
+// src/api/server.js
+const express = require('express');
+const cors = require('cors');
+const database = require('../database/supabase');
+const streakService = require('../services/streakService');
+const config = require('../config/config');
+
+class APIServer {
+    constructor() {
+        this.app = express();
+        this.setupMiddleware();
+        this.setupRoutes();
+    }
+
+    setupMiddleware() {
+        this.app.use(cors());
+        this.app.use(express.json());
+        
+        // Request logging
+        this.app.use((req, res, next) => {
+            console.log(`${new Date().toISOString()} - ${req.method} ${req.path}`);
+            next();
+        });
+    }
+
+    setupRoutes() {
+        // Health check
+        this.app.get('/', (req, res) => {
+            res.json({
+                status: 'healthy',
+                service: 'Discord Bot API',
+                timestamp: new Date().toISOString(),
+                version: '2.0.0'
+            });
+        });
+
+        // Bot status
+        this.app.get('/status', (req, res) => {
+            const client = require('../bot/client'); // We'll create this
+            
+            res.json({
+                status: client.isReady() ? 'online' : 'offline',
+                uptime: process.uptime(),
+                guilds: client.guilds ? client.guilds.cache.size : 0,
+                users: client.users ? client.users.cache.size : 0,
+                timestamp: new Date().toISOString()
+            });
+        });
+
+        // Get member streak information
+        this.app.get('/streak/:discordUsername', async (req, res) => {
+            try {
+                const { discordUsername } = req.params;
+                
+                // Get member ID
+                const memberId = await database.getMemberByDiscordUsername(discordUsername);
+                if (!memberId) {
+                    return res.status(404).json({
+                        error: 'Member not found',
+                        message: 'Discord username not registered in system'
+                    });
+                }
+
+                // Get streak information
+                const streakInfo = await streakService.getStreakInfo(memberId);
+                const memberStats = await database.getMemberStats(memberId);
+
+                res.json({
+                    discordUsername,
+                    memberId,
+                    currentStreak: streakInfo.currentStreak,
+                    lastUpdated: streakInfo.lastUpdated,
+                    memberStats: memberStats || null,
+                    timestamp: new Date().toISOString()
+                });
+            } catch (error) {
+                console.error('Error getting streak info:', error);
+                res.status(500).json({
+                    error: 'Internal server error',
+                    message: 'Failed to retrieve streak information'
+                });
+            }
+        });
+
+        // Recalculate streak for a member (admin endpoint)
+        this.app.post('/streak/:discordUsername/recalculate', async (req, res) => {
+            try {
+                const { discordUsername } = req.params;
+                
+                // Get member ID
+                const memberId = await database.getMemberByDiscordUsername(discordUsername);
+                if (!memberId) {
+                    return res.status(404).json({
+                        error: 'Member not found',
+                        message: 'Discord username not registered in system'
+                    });
+                }
+
+                // Get old streak for comparison
+                const oldStreakInfo = await streakService.getStreakInfo(memberId);
+                
+                // Recalculate and update streak using the same method as auto-recalculation
+                const newStreak = await streakService.recalculateStreakFromHistory(memberId);
+                
+                res.json({
+                    discordUsername,
+                    memberId,
+                    oldStreak: oldStreakInfo.currentStreak,
+                    newStreak,
+                    streakChanged: oldStreakInfo.currentStreak !== newStreak,
+                    message: 'Streak recalculated successfully using historical data',
+                    timestamp: new Date().toISOString()
+                });
+            } catch (error) {
+                console.error('Error recalculating streak:', error);
+                res.status(500).json({
+                    error: 'Internal server error',
+                    message: 'Failed to recalculate streak'
+                });
+            }
+        });
+
+        // Bulk recalculate streaks for all members (admin endpoint)
+        this.app.post('/streak/recalculate-all', async (req, res) => {
+            try {
+                // This would require a method to get all members, implementing basic version
+                res.json({
+                    message: 'Bulk recalculation endpoint - implement based on your members table structure',
+                    note: 'Use individual recalculation endpoints for now',
+                    individualEndpoint: 'POST /streak/:discordUsername/recalculate',
+                    timestamp: new Date().toISOString()
+                });
+            } catch (error) {
+                console.error('Error in bulk recalculation:', error);
+                res.status(500).json({
+                    error: 'Internal server error',
+                    message: 'Failed to perform bulk recalculation'
+                });
+            }
+        });
+
+        // Get bot configuration (non-sensitive info only)
+        this.app.get('/config', (req, res) => {
+            res.json({
+                pointsPerDay: config.points.dailyAmount,
+                minimumWords: config.points.minimumWords,
+                serverPort: config.server.port,
+                features: {
+                    streakTracking: true,
+                    pointsAwarding: true,
+                    spamPrevention: true,
+                    apiEndpoints: true
+                },
+                timestamp: new Date().toISOString()
+            });
+        });
+
+        // Get API statistics
+        this.app.get('/stats', (req, res) => {
+            const messageHandler = require('../handlers/messageHandler');
+            
+            res.json({
+                uptime: process.uptime(),
+                memoryUsage: process.memoryUsage(),
+                messageHandler: messageHandler.getStats(),
+                timestamp: new Date().toISOString()
+            });
+        });
+
+        // Error handling middleware
+        this.app.use((error, req, res, next) => {
+            console.error('API Error:', error);
+            res.status(500).json({
+                error: 'Internal server error',
+                message: 'An unexpected error occurred'
+            });
+        });
+
+        // 404 handler
+        this.app.use((req, res) => {
+            res.status(404).json({
+                error: 'Not found',
+                message: 'Endpoint not found'
+            });
+        });
+    }
+
+    start() {
+        return new Promise((resolve, reject) => {
+            try {
+                this.server = this.app.listen(config.server.port, () => {
+                    console.log(`🚀 API Server running on http://localhost:${config.server.port}`);
+                    resolve(this.server);
+                });
+            } catch (error) {
+                console.error('Failed to start API server:', error);
+                reject(error);
+            }
+        });
+    }
+
+    stop() {
+        return new Promise((resolve) => {
+            if (this.server) {
+                this.server.close(() => {
+                    console.log('API Server stopped');
+                    resolve();
+                });
+            } else {
+                resolve();
+            }
+        });
+    }
+}
+
+module.exports = new APIServer();

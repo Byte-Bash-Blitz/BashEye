@@ -2,10 +2,11 @@
   "name": "byte-bash-blitz-bot",
   "version": "1.0.0",
   "description": "Discord bot for Byte-Bash-Blitz server to monitor daily progress and award points",
-  "main": "bot.js",
+  "main": "src/index.js",
   "scripts": {
-    "start": "node bot.js",
-    "dev": "nodemon bot.js"
+    "start": "node src/index.js",
+    "dev": "nodemon src/index.js",
+    "legacy": "node bot.js"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.39.0",
