@@ -26,7 +26,7 @@ const BASHER_PROGRESS_CATEGORY_ID = '1351223065354178722';
 const BASHER_PROGRESS_CATEGORY_NAME = 'Basher Progress';
 const ORGANISER_ID = 77; // Bot's unique ID in your database
 const DAILY_POINTS = 5;
-const MIN_WORD_COUNT = 50;
+const MIN_WORD_COUNT = 40;
 
 // Bot status tracking
 let botStatus = {
