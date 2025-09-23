@@ -60,7 +60,7 @@ class MessageHandler {
 
             // Check if message meets criteria
             if (!this.meetsCriteria(message)) {
-                await this.sendFeedback(message, 'Your progress post needs to include a screenshot/image and at least 40 words of description! 📝');
+                await this.sendFeedback(message, 'Your progress post needs to include a screenshot/image and at least 35 words of description! 📝');
                 return;
             }
 

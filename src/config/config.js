@@ -15,7 +15,7 @@ module.exports = {
     points: {
         organiserIdBot: 77,
         dailyAmount: 5,
-        minimumWords: 40
+        minimumWords: 35
     },
     server: {
         port: process.env.PORT || 3000
