@@ -15,6 +15,7 @@ function getTodayDateString() {
 module.exports = {
     discord: {
         token: process.env.DISCORD_BOT_TOKEN,
+        clientId: process.env.DISCORD_CLIENT_ID,
         guildId: process.env.DISCORD_GUILD_ID,
         basherProgressCategoryId: '1351223065354178722', // Basher Progress category ID
         categoryName: 'Basher Progress'

@@ -49,17 +49,21 @@ class MessageHandler {
 
             // console.log(`✅ Processing message from ${message.author.username} in ${message.channel.name}`);
 
-            // Check if message meets criteria
-            if (!this.meetsCriteria(message)) {
-                await this.sendFeedback(message, `Your progress post needs to include a screenshot/image and at least ${config.points.minimumWords} words of description! 📝`);
+            // Get member ID from database first
+            const memberId = await database.getMemberByDiscordUsername(message.author.username);
+            if (!memberId) {
+                await this.sendFeedback(message, 'Your Discord username is not registered in our system. Please contact an admin! �');
                 return;
             }
 
-            // Get member ID from database
-            const memberId = await database.getMemberByDiscordUsername(message.author.username);
-            if (!memberId) {
-                await this.sendFeedback(message, 'Your Discord username is not registered in our system. Please contact an admin! 🔗');
-                return;
+            // Check if points already awarded today - silently ignore if already awarded (skip all validation)
+            const dateString = config.getTodayDateString();
+            const description = `PU-${dateString}`;
+            
+            const alreadyAwarded = await database.checkDailyPointsAwarded(memberId, description);
+            if (alreadyAwarded) {
+                console.log(`ℹ️ ${message.author.username} already received points today - ignoring message (no validation needed)`);
+                return; // Silently ignore without any validation or feedback
             }
 
             // Check for recent submissions (deployment-safe spam prevention)
@@ -69,13 +73,9 @@ class MessageHandler {
                 return;
             }
 
-            // Check if points already awarded today
-            const dateString = config.getTodayDateString();
-            const description = `PU-${dateString}`;
-            
-            const alreadyAwarded = await database.checkDailyPointsAwarded(memberId, description);
-            if (alreadyAwarded) {
-                await this.sendFeedback(message, 'You\'ve already received your daily progress points today! Come back tomorrow! 🗓️');
+            // Only validate criteria if user hasn't been awarded today
+            if (!this.meetsCriteria(message)) {
+                await this.sendFeedback(message, `Your progress post needs to include a screenshot/image and at least ${config.points.minimumWords} words of description! 📝`);
                 return;
             }
 

@@ -6,7 +6,8 @@
   "scripts": {
     "start": "node src/index.js",
     "dev": "nodemon src/index.js",
-    "legacy": "node bot.js"
+    "legacy": "node bot.js",
+    "deploy-commands": "node deployCommands.js"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.39.0",

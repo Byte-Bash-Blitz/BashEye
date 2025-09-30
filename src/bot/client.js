@@ -2,6 +2,7 @@
 const { Client, GatewayIntentBits, ActivityType } = require('discord.js');
 const config = require('../config/config');
 const messageHandler = require('../handlers/messageHandler');
+const slashCommands = require('../handlers/slashCommands');
 
 class DiscordClient {
     constructor() {
@@ -18,13 +19,23 @@ class DiscordClient {
     }
 
     setupEventHandlers() {
-        this.client.once('clientReady', () => {
+        this.client.once('clientReady', async () => {
             console.log(`🤖 Bot logged in as ${this.client.user.tag}`);
             console.log(`📊 Connected to ${this.client.guilds.cache.size} guilds`);
             console.log(`👥 Monitoring ${this.client.users.cache.size} users`);
             
             // Set bot activity
             this.client.user.setActivity('for progress posts! 📈', { type: ActivityType.Watching });
+            
+            // Auto-deploy slash commands on startup
+            console.log('🔧 Deploying slash commands...');
+            try {
+                const { deployCommands } = require('../commands/deploy');
+                await deployCommands();
+                console.log('✅ Slash commands deployed successfully');
+            } catch (error) {
+                console.error('❌ Failed to deploy slash commands:', error);
+            }
         });
 
         this.client.on('messageCreate', async (message) => {
@@ -32,6 +43,15 @@ class DiscordClient {
                 await messageHandler.handleMessage(message);
             } catch (error) {
                 console.error('Error in messageCreate handler:', error);
+            }
+        });
+
+        // Handle slash command interactions
+        this.client.on('interactionCreate', async (interaction) => {
+            try {
+                await slashCommands.handleInteraction(interaction);
+            } catch (error) {
+                console.error('Error in interactionCreate handler:', error);
             }
         });
 
