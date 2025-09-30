@@ -33,7 +33,7 @@ class StreakService {
         const dailySubmissions = {};
         
         pointsHistory.forEach(point => {
-            const date = new Date(point.created_at);
+            const date = new Date(point.updated_at);
             const dateKey = date.toISOString().split('T')[0]; // YYYY-MM-DD format
             
             if (!dailySubmissions[dateKey]) {
@@ -46,33 +46,68 @@ class StreakService {
     }
 
     calculateConsecutiveStreak(dailySubmissions) {
-        const today = new Date();
+        const now = new Date();
         let streak = 0;
-        let currentDate = new Date(today);
+        let lastSubmissionTime = null;
 
-        // Start from today and work backwards
-        while (true) {
-            const dateKey = currentDate.toISOString().split('T')[0];
+        // Get all submission dates sorted in descending order
+        const sortedDates = Object.keys(dailySubmissions).sort().reverse();
+        
+        console.log(`Checking streak with ${this.streakThresholdHours}-hour window...`);
+        
+        for (let i = 0; i < sortedDates.length; i++) {
+            const dateKey = sortedDates[i];
+            const submissions = dailySubmissions[dateKey];
             
-            if (dailySubmissions[dateKey] && dailySubmissions[dateKey].length > 0) {
-                streak++;
-                currentDate.setDate(currentDate.getDate() - 1);
-            } else {
-                // Check if we're looking at today - if no submission today, streak might still be valid
-                const isToday = this.isSameDay(currentDate, today);
-                const isYesterday = this.isSameDay(currentDate, new Date(today.getTime() - 24 * 60 * 60 * 1000));
+            if (submissions && submissions.length > 0) {
+                // Get the latest submission time for this date
+                const latestSubmission = submissions.reduce((latest, current) => {
+                    const currentTime = new Date(current.updated_at);
+                    const latestTime = new Date(latest.updated_at);
+                    return currentTime > latestTime ? current : latest;
+                });
                 
-                if (isToday || (isYesterday && streak === 0)) {
-                    // No submission today, but check if we're still within the 25-hour window from yesterday
-                    currentDate.setDate(currentDate.getDate() - 1);
-                    continue;
+                const submissionTime = new Date(latestSubmission.updated_at);
+                
+                if (streak === 0) {
+                    // First submission found - start the streak
+                    streak = 1;
+                    lastSubmissionTime = submissionTime;
+                    console.log(`Starting streak from ${dateKey} at ${submissionTime.toISOString()}`);
                 } else {
-                    // Streak is broken
-                    break;
+                    // Check if this submission is within the threshold window
+                    const timeDiff = lastSubmissionTime.getTime() - submissionTime.getTime();
+                    const hoursDiff = timeDiff / (1000 * 60 * 60);
+                    
+                    console.log(`Time difference: ${hoursDiff.toFixed(2)} hours (threshold: ${this.streakThresholdHours})`);
+                    
+                    if (hoursDiff <= this.streakThresholdHours) {
+                        // Within threshold - continue streak
+                        streak++;
+                        lastSubmissionTime = submissionTime;
+                        console.log(`Streak continued: ${streak} days`);
+                    } else {
+                        // Outside threshold - break streak
+                        console.log(`Streak broken: ${hoursDiff.toFixed(2)} hours exceeds ${this.streakThresholdHours}-hour threshold`);
+                        break;
+                    }
                 }
             }
         }
 
+        // Check if the most recent submission is too old (beyond threshold from now)
+        if (lastSubmissionTime) {
+            const timeSinceLastSubmission = now.getTime() - lastSubmissionTime.getTime();
+            const hoursSinceLastSubmission = timeSinceLastSubmission / (1000 * 60 * 60);
+            
+            if (hoursSinceLastSubmission > this.streakThresholdHours) {
+                console.log(`Last submission was ${hoursSinceLastSubmission.toFixed(2)} hours ago - beyond ${this.streakThresholdHours}-hour window`);
+                // Note: We don't reset streak to 0 here as they might post later today
+                // The streak represents consecutive days they've posted, even if not recent
+            }
+        }
+
+        console.log(`Final calculated streak with ${this.streakThresholdHours}-hour window: ${streak} days`);
         return streak;
     }
 

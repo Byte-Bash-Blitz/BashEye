@@ -51,6 +51,37 @@ class SupabaseService {
         }
     }
 
+    // Check for recent submissions (deployment-safe spam prevention)
+    async checkRecentSubmission(memberId, minutesWindow = 2) {
+        try {
+            const windowStart = new Date();
+            windowStart.setMinutes(windowStart.getMinutes() - minutesWindow);
+
+            const { data, error } = await this.client
+                .from('points')
+                .select('id, updated_at')
+                .eq('member_id', memberId)
+                .eq('organiser_id', config.points.organiserIdBot)
+                .gte('updated_at', windowStart.toISOString())
+                .limit(1);
+
+            if (error) {
+                console.error('Error checking recent submissions:', error);
+                return false;
+            }
+
+            const hasRecentSubmission = data && data.length > 0;
+            if (hasRecentSubmission) {
+                console.log(`Recent submission found within ${minutesWindow} minutes for member ${memberId}`);
+            }
+            
+            return hasRecentSubmission;
+        } catch (error) {
+            console.error('Error in checkRecentSubmission:', error);
+            return false;
+        }
+    }
+
     async awardPoints(memberId, points, description) {
         try {
             const { data, error } = await this.client
@@ -151,12 +182,12 @@ class SupabaseService {
 
             const { data, error } = await this.client
                 .from('points')
-                .select('description, created_at')
+                .select('description, updated_at')
                 .eq('member_id', memberId)
                 .eq('organiser_id', config.points.organiserIdBot)
                 .like('description', 'PU-%')
-                .gte('created_at', thirtyDaysAgo.toISOString())
-                .order('created_at', { ascending: false });
+                .gte('updated_at', thirtyDaysAgo.toISOString())
+                .order('updated_at', { ascending: false });
 
             if (error) {
                 console.error('Error fetching streak data:', error);

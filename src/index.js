@@ -69,7 +69,7 @@ async function main() {
         console.log('  • REST API endpoints for monitoring');
         console.log('  • Automatic category detection');
         console.log('\n🎯 Monitoring category: basher-progress');
-        console.log('📝 Requirements: Screenshot + 50+ words');
+        console.log('📝 Requirements: Screenshot + 35+ words');
         
     } catch (error) {
         console.error('💥 Failed to start application:', error);

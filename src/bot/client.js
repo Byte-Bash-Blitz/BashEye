@@ -1,5 +1,5 @@
 // src/bot/client.js
-const { Client, GatewayIntentBits } = require('discord.js');
+const { Client, GatewayIntentBits, ActivityType } = require('discord.js');
 const config = require('../config/config');
 const messageHandler = require('../handlers/messageHandler');
 
@@ -24,7 +24,7 @@ class DiscordClient {
             console.log(`👥 Monitoring ${this.client.users.cache.size} users`);
             
             // Set bot activity
-            this.client.user.setActivity('for progress posts! 📈', { type: 'WATCHING' });
+            this.client.user.setActivity('for progress posts! 📈', { type: ActivityType.Watching });
         });
 
         this.client.on('messageCreate', async (message) => {

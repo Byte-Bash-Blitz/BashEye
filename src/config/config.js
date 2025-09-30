@@ -1,6 +1,17 @@
 // src/config/config.js
 require('dotenv').config();
 
+// Helper function to get today's date in format for description (matching bot.js)
+function getTodayDateString() {
+    const today = new Date();
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+                   'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const day = today.getDate();
+    const month = months[today.getMonth()];
+    const year = today.getFullYear().toString().slice(-2);
+    return `${day}${month}'${year}`;
+}
+
 module.exports = {
     discord: {
         token: process.env.DISCORD_BOT_TOKEN,
@@ -19,5 +30,7 @@ module.exports = {
     },
     server: {
         port: process.env.PORT || 3000
-    }
+    },
+    // Helper functions
+    getTodayDateString
 };

@@ -36,13 +36,15 @@ class APIServer {
 
         // Bot status
         this.app.get('/status', (req, res) => {
-            const client = require('../bot/client'); // We'll create this
+            const discordClient = require('../bot/client');
+            const client = discordClient.getClient();
             
             res.json({
-                status: client.isReady() ? 'online' : 'offline',
+                status: discordClient.isReady() ? 'online' : 'offline',
                 uptime: process.uptime(),
-                guilds: client.guilds ? client.guilds.cache.size : 0,
-                users: client.users ? client.users.cache.size : 0,
+                guilds: client && client.guilds ? client.guilds.cache.size : 0,
+                users: client && client.users ? client.users.cache.size : 0,
+                ping: client && client.ws ? client.ws.ping : null,
                 timestamp: new Date().toISOString()
             });
         });

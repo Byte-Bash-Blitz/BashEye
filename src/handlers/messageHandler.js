@@ -1,11 +1,12 @@
 // src/handlers/messageHandler.js
+const { ChannelType } = require('discord.js');
 const database = require('../database/supabase');
 const streakService = require('../services/streakService');
 const config = require('../config/config');
 
 class MessageHandler {
     constructor() {
-        this.cooldowns = new Set(); // Track recent message processing to prevent spam
+        // Note: No RAM-based cooldowns - using database-based duplicate prevention instead
     }
 
     async handleMessage(message) {
@@ -14,53 +15,43 @@ class MessageHandler {
             if (message.author.bot) return;
 
             // Debug logging for channel structure
-            console.log(`📧 New message from ${message.author.username}`);
-            console.log(`📍 Channel: ${message.channel.name} (ID: ${message.channel.id})`);
-            console.log(`📂 Channel Type: ${message.channel.type}`);
+            // console.log(`📧 New message from ${message.author.username}`);
+            // console.log(`📍 Channel: ${message.channel.name} (ID: ${message.channel.id})`);
+            // console.log(`📂 Channel Type: ${message.channel.type}`);
             if (message.channel.parent) {
-                console.log(`📁 Parent: ${message.channel.parent.name} (ID: ${message.channel.parent.id})`);
+                // console.log(`📁 Parent: ${message.channel.parent.name} (ID: ${message.channel.parent.id})`);
                 if (message.channel.parent.parent) {
                     console.log(`📁 Grandparent: ${message.channel.parent.parent.name} (ID: ${message.channel.parent.parent.id})`);
                 }
             }
-            console.log(`🎯 Expected Category ID: ${config.discord.basherProgressCategoryId}`);
+            // console.log(`🎯 Expected Category ID: ${config.discord.basherProgressCategoryId}`);
 
             // Check if message is in the basher-progress category
             if (!this.isInBasherProgressCategory(message)) return;
 
             // Check if this is a thread and if the message author is the thread owner
-            if (message.channel.isThread()) {
+            if (message.channel.type === ChannelType.PublicThread || message.channel.type === ChannelType.PrivateThread) {
                 const threadOwner = message.channel.ownerId;
-                console.log(`🧵 Thread: ${message.channel.name}`);
-                console.log(`👤 Thread Owner ID: ${threadOwner}`);
-                console.log(`✍️ Message Author ID: ${message.author.id}`);
+                // console.log(`🧵 Thread: ${message.channel.name}`);
+                // console.log(`👤 Thread Owner ID: ${threadOwner}`);
+                // console.log(`✍️ Message Author ID: ${message.author.id}`);
                 
                 if (message.author.id !== threadOwner) {
-                    console.log(`❌ Message from ${message.author.username} ignored - not the thread owner`);
+                    // console.log(`❌ Message from ${message.author.username} ignored - not the thread owner`);
                     return;
                 }
                 
-                console.log(`✅ Message from thread owner ${message.author.username} - processing for points`);
+                // console.log(`✅ Message from thread owner ${message.author.username} - processing for points`);
             }
 
-            // Check for cooldown to prevent rapid processing
-            const cooldownKey = `${message.author.id}-${Date.now()}`;
-            if (this.cooldowns.has(message.author.id)) {
-                console.log(`Cooldown active for user ${message.author.username}`);
-                return;
-            }
+            // Database-based duplicate prevention (deployment-safe, no RAM dependency)
+            // The duplicate check happens via database query below
 
-            // Add to cooldown (5 second cooldown)
-            this.cooldowns.add(message.author.id);
-            setTimeout(() => {
-                this.cooldowns.delete(message.author.id);
-            }, 5000);
-
-            console.log(`✅ Processing message from ${message.author.username} in ${message.channel.name}`);
+            // console.log(`✅ Processing message from ${message.author.username} in ${message.channel.name}`);
 
             // Check if message meets criteria
             if (!this.meetsCriteria(message)) {
-                await this.sendFeedback(message, 'Your progress post needs to include a screenshot/image and at least 35 words of description! 📝');
+                await this.sendFeedback(message, `Your progress post needs to include a screenshot/image and at least ${config.points.minimumWords} words of description! 📝`);
                 return;
             }
 
@@ -71,9 +62,16 @@ class MessageHandler {
                 return;
             }
 
+            // Check for recent submissions (deployment-safe spam prevention)
+            const hasRecentSubmission = await database.checkRecentSubmission(memberId, 2);
+            if (hasRecentSubmission) {
+                console.log(`Ignoring rapid submission from ${message.author.username} - recent submission within 2 minutes`);
+                return;
+            }
+
             // Check if points already awarded today
-            const today = new Date().toISOString().split('T')[0];
-            const description = `PU-${today}`;
+            const dateString = config.getTodayDateString();
+            const description = `PU-${dateString}`;
             
             const alreadyAwarded = await database.checkDailyPointsAwarded(memberId, description);
             if (alreadyAwarded) {
@@ -90,6 +88,13 @@ class MessageHandler {
 
             // Update streak
             const streakInfo = await streakService.handleDailySubmission(memberId);
+
+            // React to the message to show it was processed
+            try {
+                await message.react('✅');
+            } catch (error) {
+                console.error('Error reacting to message:', error);
+            }
 
             // Send success feedback with streak information
             await this.sendSuccessFeedback(message, streakInfo);
@@ -108,7 +113,7 @@ class MessageHandler {
             console.log(`Checking channel: ${channel.name} (ID: ${channel.id}), Type: ${channel.type}`);
             
             // Handle forum threads (messages in forum channel threads)
-            if (channel.isThread() && channel.parent) {
+            if ((channel.type === ChannelType.PublicThread || channel.type === ChannelType.PrivateThread) && channel.parent) {
                 const forum = channel.parent;
                 console.log(`Thread parent forum: ${forum.name} (ID: ${forum.id})`);
                 
@@ -157,13 +162,16 @@ class MessageHandler {
     }
 
     meetsCriteria(message) {
-        const hasAttachment = message.attachments.size > 0;
+        const hasImageAttachment = message.attachments.size > 0 && 
+               message.attachments.some(attachment => 
+                   attachment.contentType && attachment.contentType.startsWith('image/')
+               );
         const wordCount = message.content.split(/\s+/).filter(word => word.length > 0).length;
         const hasEnoughWords = wordCount >= config.points.minimumWords;
         
-        console.log(`Message criteria check - Attachments: ${hasAttachment}, Word count: ${wordCount}/${config.points.minimumWords}, Meets criteria: ${hasAttachment && hasEnoughWords}`);
+        console.log(`Message criteria check - Image attachments: ${hasImageAttachment}, Word count: ${wordCount}/${config.points.minimumWords}, Meets criteria: ${hasImageAttachment && hasEnoughWords}`);
         
-        return hasAttachment && hasEnoughWords;
+        return hasImageAttachment && hasEnoughWords;
     }
 
     async sendFeedback(message, feedbackText) {
@@ -183,15 +191,15 @@ class MessageHandler {
 
     async sendSuccessFeedback(message, streakInfo) {
         try {
-            let feedbackText = `🎉 Great job! You've earned ${config.points.dailyAmount} points for your daily progress!`;
+            let feedbackText = `Appreciation for updating your daily progress, Basher ${message.author.username}. You’ve been awarded 5 points for your update ${new Date().toLocaleDateString()} `;
             
             if (streakInfo.currentStreak > 0) {
-                feedbackText += `\n🔥 Current streak: **${streakInfo.currentStreak} day${streakInfo.currentStreak !== 1 ? 's' : ''}**!`;
+                feedbackText += `\nCurrent streak: **${streakInfo.currentStreak} day${streakInfo.currentStreak !== 1 ? 's' : ''}**!`;
                 
                 if (streakInfo.currentStreak >= 7) {
-                    feedbackText += ` Amazing consistency! 🏆`;
+                    feedbackText += ` Amazing consistency!`;
                 } else if (streakInfo.currentStreak >= 3) {
-                    feedbackText += ` Keep it up! 💪`;
+                    feedbackText += ` Keep it up!`;
                 }
             }
             
@@ -204,15 +212,10 @@ class MessageHandler {
     // Get handler statistics
     getStats() {
         return {
-            activeCooldowns: this.cooldowns.size,
+            status: 'deployment-safe',
+            duplicatePrevention: 'database-based',
             timestamp: new Date().toISOString()
         };
-    }
-
-    // Clear all cooldowns (for testing or admin purposes)
-    clearCooldowns() {
-        this.cooldowns.clear();
-        console.log('All message handler cooldowns cleared');
     }
 }
 
