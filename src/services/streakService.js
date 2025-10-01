@@ -1,28 +1,46 @@
 // src/services/streakService.js
 const database = require('../database/supabase');
+const config = require('../config/config');
 
 class StreakService {
     constructor() {
-        this.streakThresholdHours = 25; // 25-hour window for daily posts
+        // Daily cutoff configuration (11:59 PM IST)
+        this.dailyCutoffHour = config.timezone.cutoffHour;
+        this.dailyCutoffMinute = config.timezone.cutoffMinute;
+        this.dailyCutoffSecond = config.timezone.cutoffSecond;
     }
 
-    // Calculate current streak based on historical data
+    // Calculate current streak based on historical data (using IST timezone)
     async calculateStreak(memberId) {
         try {
-            const pointsHistory = await database.getStreakData(memberId);
+            console.log(`📊 Calculating streak for member ${memberId} using IST timezone...`);
             
-            if (!pointsHistory || pointsHistory.length === 0) {
+            // Get all points records for this member
+            const pointsRecords = await database.getPointsByMember(memberId);
+            
+            if (!pointsRecords || pointsRecords.length === 0) {
+                console.log(`No points records found for member ${memberId}`);
                 return 0;
             }
 
-            // Group points by date (UTC)
-            const dailySubmissions = this.groupPointsByDate(pointsHistory);
+            // Group records by IST date (YYYY-MM-DD format)
+            const dailySubmissions = {};
+            pointsRecords.forEach(record => {
+                // Convert UTC timestamp to IST date (using updated_at from points table)
+                const recordDate = new Date(record.updated_at);
+                const istDate = config.convertToIST(recordDate);
+                const dateKey = istDate.toISOString().split('T')[0]; // YYYY-MM-DD format in IST
+                
+                if (!dailySubmissions[dateKey]) {
+                    dailySubmissions[dateKey] = [];
+                }
+                dailySubmissions[dateKey].push(record);
+            });
+
+            console.log(`Found points records across ${Object.keys(dailySubmissions).length} different dates (IST)`);
             
-            // Calculate current streak
-            const streak = this.calculateConsecutiveStreak(dailySubmissions);
-            
-            console.log(`Calculated streak for member ${memberId}: ${streak} days`);
-            return streak;
+            // Calculate consecutive streak from today backwards
+            return this.calculateConsecutiveStreak(dailySubmissions);
         } catch (error) {
             console.error('Error calculating streak:', error);
             return 0;
@@ -33,8 +51,10 @@ class StreakService {
         const dailySubmissions = {};
         
         pointsHistory.forEach(point => {
+            // Convert UTC timestamp to IST date
             const date = new Date(point.updated_at);
-            const dateKey = date.toISOString().split('T')[0]; // YYYY-MM-DD format
+            const istDate = config.convertToIST(date);
+            const dateKey = istDate.toISOString().split('T')[0]; // YYYY-MM-DD format in IST
             
             if (!dailySubmissions[dateKey]) {
                 dailySubmissions[dateKey] = [];
@@ -46,68 +66,67 @@ class StreakService {
     }
 
     calculateConsecutiveStreak(dailySubmissions) {
-        const now = new Date();
+        const today = config.getCurrentISTDate();
         let streak = 0;
-        let lastSubmissionTime = null;
+        let currentDate = new Date(today);
 
-        // Get all submission dates sorted in descending order
-        const sortedDates = Object.keys(dailySubmissions).sort().reverse();
+        console.log(`Checking streak with daily cutoff at 11:59 PM IST...`);
         
-        console.log(`Checking streak with ${this.streakThresholdHours}-hour window...`);
-        
-        for (let i = 0; i < sortedDates.length; i++) {
-            const dateKey = sortedDates[i];
-            const submissions = dailySubmissions[dateKey];
+        // Start from today and work backwards, checking each day
+        while (true) {
+            const dateKey = currentDate.toISOString().split('T')[0]; // YYYY-MM-DD format in IST
             
-            if (submissions && submissions.length > 0) {
-                // Get the latest submission time for this date
-                const latestSubmission = submissions.reduce((latest, current) => {
-                    const currentTime = new Date(current.updated_at);
-                    const latestTime = new Date(latest.updated_at);
-                    return currentTime > latestTime ? current : latest;
+            if (dailySubmissions[dateKey] && dailySubmissions[dateKey].length > 0) {
+                // Found submission for this date - check if it was before midnight cutoff
+                const submissions = dailySubmissions[dateKey];
+                const validSubmission = submissions.some(submission => {
+                    // Convert submission time to IST (using updated_at from points table)
+                    const submissionTime = new Date(submission.updated_at);
+                    const istSubmissionTime = config.convertToIST(submissionTime);
+                    
+                    // Create cutoff time for the submission date in IST
+                    const cutoffTime = new Date(istSubmissionTime);
+                    cutoffTime.setUTCHours(this.dailyCutoffHour, this.dailyCutoffMinute, this.dailyCutoffSecond, 999);
+                    
+                    // Check if submission was before the daily cutoff (11:59:59 PM IST)
+                    return istSubmissionTime <= cutoffTime;
                 });
                 
-                const submissionTime = new Date(latestSubmission.updated_at);
-                
-                if (streak === 0) {
-                    // First submission found - start the streak
-                    streak = 1;
-                    lastSubmissionTime = submissionTime;
-                    console.log(`Starting streak from ${dateKey} at ${submissionTime.toISOString()}`);
+                if (validSubmission) {
+                    streak++;
+                    console.log(`✅ Day ${dateKey}: Valid submission found (streak: ${streak})`);
                 } else {
-                    // Check if this submission is within the threshold window
-                    const timeDiff = lastSubmissionTime.getTime() - submissionTime.getTime();
-                    const hoursDiff = timeDiff / (1000 * 60 * 60);
-                    
-                    console.log(`Time difference: ${hoursDiff.toFixed(2)} hours (threshold: ${this.streakThresholdHours})`);
-                    
-                    if (hoursDiff <= this.streakThresholdHours) {
-                        // Within threshold - continue streak
-                        streak++;
-                        lastSubmissionTime = submissionTime;
-                        console.log(`Streak continued: ${streak} days`);
-                    } else {
-                        // Outside threshold - break streak
-                        console.log(`Streak broken: ${hoursDiff.toFixed(2)} hours exceeds ${this.streakThresholdHours}-hour threshold`);
-                        break;
-                    }
+                    console.log(`❌ Day ${dateKey}: Submission found but after 11:59 PM cutoff - streak broken`);
+                    break;
+                }
+            } else {
+                // No submission found for this date
+                const isToday = this.isSameDay(currentDate, today);
+                
+                if (isToday && streak === 0) {
+                    // No submission today yet, but this could be the start
+                    console.log(`📅 Today (${dateKey}): No submission yet, checking previous days...`);
+                } else if (isToday) {
+                    // Had streak going but no submission today - streak might continue if they post later
+                    console.log(`📅 Today (${dateKey}): No submission yet, but streak continues (they can still post)`);
+                } else {
+                    // No submission on a past date - streak is broken
+                    console.log(`❌ Day ${dateKey}: No submission found - streak broken`);
+                    break;
                 }
             }
-        }
-
-        // Check if the most recent submission is too old (beyond threshold from now)
-        if (lastSubmissionTime) {
-            const timeSinceLastSubmission = now.getTime() - lastSubmissionTime.getTime();
-            const hoursSinceLastSubmission = timeSinceLastSubmission / (1000 * 60 * 60);
             
-            if (hoursSinceLastSubmission > this.streakThresholdHours) {
-                console.log(`Last submission was ${hoursSinceLastSubmission.toFixed(2)} hours ago - beyond ${this.streakThresholdHours}-hour window`);
-                // Note: We don't reset streak to 0 here as they might post later today
-                // The streak represents consecutive days they've posted, even if not recent
+            // Move to the previous day
+            currentDate.setDate(currentDate.getDate() - 1);
+            
+            // Prevent infinite loop - only check last 365 days
+            if (streak > 365) {
+                console.log(`🎉 Streak limit reached: ${streak} days (stopping calculation)`);
+                break;
             }
         }
 
-        console.log(`Final calculated streak with ${this.streakThresholdHours}-hour window: ${streak} days`);
+        console.log(`Final calculated streak with daily 11:59 PM cutoff: ${streak} days`);
         return streak;
     }
 
@@ -197,6 +216,36 @@ class StreakService {
 
     isSameDay(date1, date2) {
         return date1.toISOString().split('T')[0] === date2.toISOString().split('T')[0];
+    }
+
+    // Check if current time is close to daily cutoff (within 2 hours) - IST
+    isNearDailyCutoff() {
+        const now = config.getCurrentISTDate();
+        const cutoffTime = new Date(now);
+        cutoffTime.setUTCHours(this.dailyCutoffHour, this.dailyCutoffMinute, this.dailyCutoffSecond, 999);
+        
+        const twoHoursBefore = new Date(cutoffTime);
+        twoHoursBefore.setUTCHours(twoHoursBefore.getUTCHours() - 2);
+        
+        return now >= twoHoursBefore && now <= cutoffTime;
+    }
+
+    // Get time remaining until daily cutoff (IST)
+    getTimeUntilCutoff() {
+        const now = config.getCurrentISTDate();
+        const cutoffTime = new Date(now);
+        cutoffTime.setUTCHours(this.dailyCutoffHour, this.dailyCutoffMinute, this.dailyCutoffSecond, 999);
+        
+        // If current time is past cutoff, calculate for next day
+        if (now > cutoffTime) {
+            cutoffTime.setUTCDate(cutoffTime.getUTCDate() + 1);
+        }
+        
+        const timeDiff = cutoffTime.getTime() - now.getTime();
+        const hours = Math.floor(timeDiff / (1000 * 60 * 60));
+        const minutes = Math.floor((timeDiff % (1000 * 60 * 60)) / (1000 * 60));
+        
+        return { hours, minutes, cutoffTime };
     }
 
     // Get streak information for a member

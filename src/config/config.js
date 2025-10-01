@@ -1,15 +1,38 @@
 // src/config/config.js
 require('dotenv').config();
 
-// Helper function to get today's date in format for description (matching bot.js)
+// Helper function to get today's date in IST timezone
 function getTodayDateString() {
     const today = new Date();
+    // Convert to IST (UTC+5:30)
+    const istOffset = 5.5 * 60 * 60 * 1000; // 5.5 hours in milliseconds
+    const istDate = new Date(today.getTime() + istOffset);
+    
     const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
                    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-    const day = today.getDate();
-    const month = months[today.getMonth()];
-    const year = today.getFullYear().toString().slice(-2);
+    const day = istDate.getUTCDate();
+    const month = months[istDate.getUTCMonth()];
+    const year = istDate.getUTCFullYear().toString().slice(-2);
     return `${day}${month}'${year}`;
+}
+
+// Helper function to get current time in IST
+function getCurrentISTDate() {
+    const now = new Date();
+    const istOffset = 5.5 * 60 * 60 * 1000; // 5.5 hours in milliseconds
+    return new Date(now.getTime() + istOffset);
+}
+
+// Helper function to convert any date to IST
+function convertToIST(date) {
+    const istOffset = 5.5 * 60 * 60 * 1000; // 5.5 hours in milliseconds
+    return new Date(date.getTime() + istOffset);
+}
+
+// Helper function to get date string in YYYY-MM-DD format for IST
+function getISTDateString(date = null) {
+    const targetDate = date || getCurrentISTDate();
+    return targetDate.toISOString().split('T')[0];
 }
 
 module.exports = {
@@ -32,6 +55,17 @@ module.exports = {
     server: {
         port: process.env.PORT || 3000
     },
+    timezone: {
+        name: 'IST',
+        offset: '+05:30',
+        offsetHours: 5.5,
+        cutoffHour: 23,    // 11 PM IST
+        cutoffMinute: 59,  // 59 minutes
+        cutoffSecond: 59   // 59 seconds
+    },
     // Helper functions
-    getTodayDateString
+    getTodayDateString,
+    getCurrentISTDate,
+    convertToIST,
+    getISTDateString
 };

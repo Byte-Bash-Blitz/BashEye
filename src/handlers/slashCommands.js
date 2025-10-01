@@ -29,7 +29,7 @@ class SlashCommandHandler {
                         },
                         { 
                             name: '🔥 Streak System', 
-                            value: '• Maintain daily posts to build streaks\n• 25-hour window between posts\n• Streaks persist across deployments', 
+                            value: '• Maintain daily posts to build streaks\n• Must post before 11:59 PM each day\n• Streaks persist across deployments', 
                             inline: false 
                         },
                         { 

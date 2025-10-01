@@ -200,6 +200,33 @@ class SupabaseService {
             return [];
         }
     }
+
+    async getPointsByMember(memberId) {
+        try {
+            // Get the last 365 days of points for comprehensive streak calculation
+            const oneYearAgo = new Date();
+            oneYearAgo.setDate(oneYearAgo.getDate() - 365);
+
+            const { data, error } = await this.client
+                .from('points')
+                .select('description, updated_at')
+                .eq('member_id', memberId)
+                .eq('organiser_id', config.points.organiserIdBot)
+                .like('description', 'PU-%')
+                .gte('updated_at', oneYearAgo.toISOString())
+                .order('updated_at', { ascending: false });
+
+            if (error) {
+                console.error('Error fetching points by member:', error);
+                return [];
+            }
+
+            return data || [];
+        } catch (error) {
+            console.error('Error in getPointsByMember:', error);
+            return [];
+        }
+    }
 }
 
 module.exports = new SupabaseService();
