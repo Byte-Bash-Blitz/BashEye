@@ -1,16 +1,41 @@
 // src/database/supabase.js
 const { createClient } = require('@supabase/supabase-js');
 const config = require('../config/config');
+const supabaseAuth = require('./supabaseAuth');
 
 class SupabaseService {
     constructor() {
-        this.client = createClient(config.supabase.url, config.supabase.key);
+        // Keep fallback client for non-authenticated operations if needed
+        this.fallbackClient = createClient(config.supabase.url, config.supabase.key);
+        
+        // Initialize authentication when service starts
+        this.initializeAuth();
+    }
+
+    async initializeAuth() {
+        try {
+            console.log('🔐 Initializing bot user authentication...');
+            await supabaseAuth.authenticate();
+        } catch (error) {
+            console.error('❌ Failed to initialize authentication:', error);
+        }
+    }
+
+    async getClient() {
+        // Ensure we're authenticated before returning client
+        const isAuth = await supabaseAuth.ensureAuthenticated();
+        if (!isAuth) {
+            console.error('❌ Failed to authenticate bot user, falling back to anon client');
+            return this.fallbackClient;
+        }
+        return supabaseAuth.getAuthenticatedClient();
     }
 
     // Member operations
     async getMemberByDiscordUsername(discordUsername) {
         try {
-            const { data, error } = await this.client
+            const client = await this.getClient();
+            const { data, error } = await client
                 .from('members')
                 .select('id')
                 .eq('discord_username', discordUsername)
@@ -31,7 +56,8 @@ class SupabaseService {
     // Points operations
     async checkDailyPointsAwarded(memberId, description) {
         try {
-            const { data, error } = await this.client
+            const client = await this.getClient();
+            const { data, error } = await client
                 .from('points')
                 .select('id')
                 .eq('member_id', memberId)
@@ -57,7 +83,8 @@ class SupabaseService {
             const windowStart = new Date();
             windowStart.setMinutes(windowStart.getMinutes() - minutesWindow);
 
-            const { data, error } = await this.client
+            const client = await this.getClient();
+            const { data, error } = await client
                 .from('points')
                 .select('id, updated_at')
                 .eq('member_id', memberId)
@@ -84,7 +111,8 @@ class SupabaseService {
 
     async awardPoints(memberId, points, description) {
         try {
-            const { data, error } = await this.client
+            const client = await this.getClient();
+            const { data, error } = await client
                 .from('points')
                 .insert({
                     member_id: memberId,
@@ -108,7 +136,8 @@ class SupabaseService {
     // Member stats operations
     async getMemberStats(memberId) {
         try {
-            const { data, error } = await this.client
+            const client = await this.getClient();
+            const { data, error } = await client
                 .from('member_stats')
                 .select('*')
                 .eq('member_id', memberId)
@@ -128,7 +157,8 @@ class SupabaseService {
 
     async createMemberStats(memberId) {
         try {
-            const { data, error } = await this.client
+            const client = await this.getClient();
+            const { data, error } = await client
                 .from('member_stats')
                 .insert({
                     member_id: memberId,
@@ -152,7 +182,8 @@ class SupabaseService {
 
     async updateDiscordStreak(memberId, newStreak) {
         try {
-            const { data, error } = await this.client
+            const client = await this.getClient();
+            const { data, error } = await client
                 .from('member_stats')
                 .update({
                     discord_streak: newStreak,
@@ -180,7 +211,8 @@ class SupabaseService {
             const thirtyDaysAgo = new Date();
             thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
-            const { data, error } = await this.client
+            const client = await this.getClient();
+            const { data, error } = await client
                 .from('points')
                 .select('description, updated_at')
                 .eq('member_id', memberId)
@@ -207,7 +239,8 @@ class SupabaseService {
             const oneYearAgo = new Date();
             oneYearAgo.setDate(oneYearAgo.getDate() - 365);
 
-            const { data, error } = await this.client
+            const client = await this.getClient();
+            const { data, error } = await client
                 .from('points')
                 .select('description, updated_at')
                 .eq('member_id', memberId)

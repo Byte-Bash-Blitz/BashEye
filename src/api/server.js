@@ -49,6 +49,17 @@ class APIServer {
             });
         });
 
+        // Authentication status
+        this.app.get('/auth/status', (req, res) => {
+            const supabaseAuth = require('../database/supabaseAuth');
+            const authStatus = supabaseAuth.getAuthStatus();
+            
+            res.json({
+                ...authStatus,
+                timestamp: new Date().toISOString()
+            });
+        });
+
         // Get member streak information
         this.app.get('/streak/:discordUsername', async (req, res) => {
             try {
