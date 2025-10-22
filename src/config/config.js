@@ -47,6 +47,9 @@ module.exports = {
         url: process.env.SUPABASE_URL,
         key: process.env.SUPABASE_ANON_KEY
     },
+    gemini: {
+        apiKey: process.env.GEMINI_API_KEY
+    },
     points: {
         organiserIdBot: 77,
         dailyAmount: 5,

@@ -3,6 +3,7 @@ const { ChannelType } = require('discord.js');
 const database = require('../database/supabase');
 const streakService = require('../services/streakService');
 const config = require('../config/config');
+const aiService = require('../services/aiService');
 
 class MessageHandler {
     constructor() {
@@ -61,10 +62,10 @@ class MessageHandler {
             const description = `PU-${dateString}`;
             
             const alreadyAwarded = await database.checkDailyPointsAwarded(memberId, description);
-            if (alreadyAwarded) {
-                console.log(`ℹ️ ${message.author.username} already received points today - ignoring message (no validation needed)`);
-                return; // Silently ignore without any validation or feedback
-            }
+             if (alreadyAwarded) {
+             console.log(`ℹ️ ${message.author.username} already received points today - ignoring message (no validation needed)`);
+                 return; // Silently ignore without any validation or feedback
+         }
 
             // Check for recent submissions (deployment-safe spam prevention)
             const hasRecentSubmission = await database.checkRecentSubmission(memberId, 2);
@@ -73,22 +74,57 @@ class MessageHandler {
                 return;
             }
 
-            // Only validate criteria if user hasn't been awarded today
+            // 1. Basic Criteria Check
             if (!this.meetsCriteria(message)) {
                 await this.sendFeedback(message, `Your progress post needs to include a screenshot/image and at least ${config.points.minimumWords} words of description! 📝`);
                 return;
             }
 
-            // Award points
+            // 2. NEW: AI Validation
+            console.log(`🤖 Running AI validation for ${message.author.username}...`);
+            const aiValidation = await aiService.validateProgressText(message.content);
+
+            // --- SAVAGE REPLY LOGIC ---
+            if (!aiValidation.isGenuine) {
+                console.log(`❌ AI check FAILED for ${message.author.username}. Reason: ${aiValidation.reason}`);
+                // Send the new "savage" reason from the AI
+                await this.sendFeedback(message, `🤦 **AI Feedback:** ${aiValidation.reason}\n\nTry again with a real update!`);
+                return; // Stop processing
+            }
+
+            console.log(`✅ AI check PASSED for ${message.author.username}.`);
+            // --- END AI VALIDATION ---
+
+            // 3. Award points
             const success = await database.awardPoints(memberId, config.points.dailyAmount, description);
             if (!success) {
                 await this.sendFeedback(message, 'There was an error awarding your points. Please contact an admin! ⚠️');
                 return;
             }
 
-            // Update streak
+            // 4. Update streak
             const streakInfo = await streakService.handleDailySubmission(memberId);
 
+            // 5. --- NEW ENHANCED FEEDBACK ---
+            let enhancedFeedback = null;
+            try {
+                console.log(`🤖 Generating enhanced feedback for ${message.author.username}...`);
+                // Get the feedback object (grammar, suggestion, topic)
+                const feedbackData = await aiService.getEnhancedFeedback(message.content);
+                if (feedbackData) {
+                    // Get a random fact based on the topic
+                    const fact = await aiService.getRelevantFact(feedbackData.topic);
+                    enhancedFeedback = {
+                        grammar: feedbackData.grammar,
+                        suggestion: feedbackData.suggestion,
+                        fact: fact
+                    };
+                }
+            } catch (e) {
+                console.error("Failed to generate full AI feedback", e);
+                // Continue without feedback if this part fails
+            }
+            // --- END ENHANCED FEEDBACK ---
             // React to the message to show it was processed
             try {
                 await message.react('✅');
@@ -97,7 +133,8 @@ class MessageHandler {
             }
 
             // Send success feedback with streak information
-            await this.sendSuccessFeedback(message, streakInfo);
+            // Send success feedback with streak information
+            await this.sendSuccessFeedback(message, streakInfo, enhancedFeedback);
 
             console.log(`Successfully awarded ${config.points.dailyAmount} points to ${message.author.username} (Member ID: ${memberId}). Streak: ${streakInfo.currentStreak} days`);
 
@@ -189,7 +226,7 @@ class MessageHandler {
         }
     }
 
-    async sendSuccessFeedback(message, streakInfo) {
+    async sendSuccessFeedback(message, streakInfo, aiFeedback = null) {
         try {
             let feedbackText = `Appreciation for updating your daily progress, Basher ${message.author.username}. You’ve been awarded 5 points for your update ${new Date().toLocaleDateString()} `;
             
@@ -203,6 +240,22 @@ class MessageHandler {
                 }
             }
             
+            // --- NEW AI FEEDBACK BLOCK ---
+            if (aiFeedback) {
+                feedbackText += `\n\n--- 🤖 **AI Coach's Feedback** ---\n`;
+                if (aiFeedback.grammar) {
+                    feedbackText += `**Clarity Tip:** ${aiFeedback.grammar}\n`;
+                }
+                if (aiFeedback.suggestion) {
+                    feedbackText += `**Next Step:** ${aiFeedback.suggestion}\n`;
+                }
+                if (aiFeedback.fact) {
+                    feedbackText += `**Topic Fact:** ${aiFeedback.fact}`;
+                }
+            }
+            // --- END AI FEEDBACK BLOCK ---
+            // Send success feedback with streak and NEW AI feedback
+            // Send success feedback with streak and NEW AI feedback
             await this.sendFeedback(message, feedbackText);
         } catch (error) {
             console.error('Error sending success feedback:', error);

@@ -312,7 +312,7 @@ async function handleMessage(message) {
         console.log(`❌ Message from ${message.author.username} has only ${wordCount} words (minimum: ${MIN_WORD_COUNT})`);
         try {
             await message.reply({
-                content: `📝 **Need More Details!**\n\nHi ${message.author}, your progress update needs at least **${MIN_WORD_COUNT} words** to earn points.\n\n*Current word count: ${wordCount}*\n*Required: ${MIN_WORD_COUNT} words*\n\nPlease add more details about your progress!`,
+                content: `📝 **Need More Details!**\n\nHi ${message.author}, your progress update needs at least  **${MIN_WORD_COUNT} words** to earn points.\n\n*Current word count: ${wordCount}*\n*Required: ${MIN_WORD_COUNT} words*\n\nPlease add more details about your progress!`,
                 allowedMentions: { users: [message.author.id] }
             });
         } catch (error) {
