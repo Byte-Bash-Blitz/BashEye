@@ -11,7 +11,8 @@ class DiscordClient {
                 GatewayIntentBits.Guilds,
                 GatewayIntentBits.GuildMessages,
                 GatewayIntentBits.MessageContent,
-                GatewayIntentBits.GuildMessageReactions
+                GatewayIntentBits.GuildMessageReactions,
+                GatewayIntentBits.GuildVoiceStates  // Required for voice channel tracking
             ]
         });
 
@@ -21,6 +22,7 @@ class DiscordClient {
     setupEventHandlers() {
         this.client.once('clientReady', async () => {
             console.log(`🤖 Bot logged in as ${this.client.user.tag}`);
+            console.log(`🆔 Application ID: ${this.client.user.id}`);
             console.log(`📊 Connected to ${this.client.guilds.cache.size} guilds`);
             console.log(`👥 Monitoring ${this.client.users.cache.size} users`);
             
@@ -36,6 +38,16 @@ class DiscordClient {
             } catch (error) {
                 console.error('❌ Failed to deploy slash commands:', error);
             }
+
+            // Initialize and post scheduler message
+            console.log('📅 Initializing meeting scheduler...');
+            try {
+                const meetingScheduler = require('../handlers/meetingScheduler');
+                await meetingScheduler.initialize(this.client);
+                await meetingScheduler.postSchedulerMessage(this.client);
+            } catch (error) {
+                console.error('❌ Failed to initialize scheduler:', error);
+            }
         });
 
         this.client.on('messageCreate', async (message) => {
@@ -46,10 +58,18 @@ class DiscordClient {
             }
         });
 
-        // Handle slash command interactions
+        // Handle slash command and button interactions
         this.client.on('interactionCreate', async (interaction) => {
             try {
-                await slashCommands.handleInteraction(interaction);
+                // Check if it's a meeting scheduler interaction (button or modal)
+                if ((interaction.isButton() && ['schedule_meeting', 'view_meetings', 'cancel_meeting'].includes(interaction.customId)) ||
+                    (interaction.isModalSubmit() && ['schedule_modal', 'cancel_modal'].includes(interaction.customId))) {
+                    const meetingScheduler = require('../handlers/meetingScheduler');
+                    await meetingScheduler.handleInteraction(interaction);
+                } else {
+                    // Handle slash commands
+                    await slashCommands.handleInteraction(interaction);
+                }
             } catch (error) {
                 console.error('Error in interactionCreate handler:', error);
             }
