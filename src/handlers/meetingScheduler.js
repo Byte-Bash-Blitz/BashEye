@@ -612,9 +612,16 @@ class MeetingScheduler {
         if (period === 'PM' && hours !== 12) hours += 12;
         if (period === 'AM' && hours === 12) hours = 0;
 
-        const result = new Date(baseDate);
-        result.setHours(hours, minutes, 0, 0);
-        return result;
+        // Create date string in IST timezone format
+        const year = baseDate.getFullYear();
+        const month = String(baseDate.getMonth() + 1).padStart(2, '0');
+        const day = String(baseDate.getDate()).padStart(2, '0');
+        const hourStr = String(hours).padStart(2, '0');
+        const minStr = String(minutes).padStart(2, '0');
+        
+        // Parse as IST (Asia/Kolkata) and convert to Date object
+        const istDateStr = `${year}-${month}-${day}T${hourStr}:${minStr}:00+05:30`;
+        return new Date(istDateStr);
     }
 
     async showScheduledMeetings(interaction) {
