@@ -4,7 +4,7 @@ const config = require('../config/config');
 
 // Initialize the AI client
 const genAI = new GoogleGenerativeAI(config.gemini.apiKey);
-const genAIModel = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
+const genAIModel = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
 
 /**
  * Validates the progress text for genuineness.
