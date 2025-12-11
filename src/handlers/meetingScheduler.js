@@ -497,18 +497,35 @@ class MeetingScheduler {
 
             const channel = voiceChannels[channelNum - 1];
 
-            let dateObj = new Date();
+            // Get current IST date
+            let dateObj;
             if (dateStr) {
                 const [day, month, year] = dateStr.split('/');
-                dateObj = new Date(year, month - 1, day);
-                if (isNaN(dateObj.getTime())) {
+                dateObj = { year: parseInt(year), month: parseInt(month), day: parseInt(day) };
+                if (isNaN(dateObj.year) || isNaN(dateObj.month) || isNaN(dateObj.day)) {
                     await interaction.editReply('❌ Invalid date format');
                     return;
                 }
+            } else {
+                // Use current IST date when date field is empty
+                const now = new Date();
+                const istOffset = 5.5 * 60 * 60 * 1000; // IST is UTC+5:30
+                const istDate = new Date(now.getTime() + istOffset);
+                dateObj = {
+                    year: istDate.getUTCFullYear(),
+                    month: istDate.getUTCMonth() + 1,
+                    day: istDate.getUTCDate()
+                };
             }
 
             const startTime = this.parseTime(startTimeStr, dateObj);
             const endTime = this.parseTime(endTimeStr, dateObj);
+
+            console.log(`📅 Debug - Date object:`, dateObj);
+            console.log(`📅 Debug - Start time string: "${startTimeStr}"`);
+            console.log(`📅 Debug - Parsed start time:`, startTime);
+            console.log(`📅 Debug - Start time ISO:`, startTime?.toISOString());
+            console.log(`📅 Debug - End time ISO:`, endTime?.toISOString());
 
             if (!startTime || !endTime) {
                 await interaction.editReply('❌ Invalid time format');
@@ -601,7 +618,7 @@ class MeetingScheduler {
         }
     }
 
-    parseTime(timeStr, baseDate) {
+    parseTime(timeStr, dateObj) {
         const match = timeStr.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
         if (!match) return null;
 
@@ -612,16 +629,60 @@ class MeetingScheduler {
         if (period === 'PM' && hours !== 12) hours += 12;
         if (period === 'AM' && hours === 12) hours = 0;
 
-        // Create date string in IST timezone format
-        const year = baseDate.getFullYear();
-        const month = String(baseDate.getMonth() + 1).padStart(2, '0');
-        const day = String(baseDate.getDate()).padStart(2, '0');
-        const hourStr = String(hours).padStart(2, '0');
-        const minStr = String(minutes).padStart(2, '0');
+        // Convert IST to UTC (same logic as node-cron)
+        // IST is UTC+5:30, so we subtract 5 hours 30 minutes to get UTC
+        const totalIstMinutes = hours * 60 + minutes;
+        const totalUtcMinutes = totalIstMinutes - (5 * 60 + 30);
         
-        // Parse as IST (Asia/Kolkata) and convert to Date object
-        const istDateStr = `${year}-${month}-${day}T${hourStr}:${minStr}:00+05:30`;
-        return new Date(istDateStr);
+        let utcHours = Math.floor(totalUtcMinutes / 60);
+        let utcMinutes = totalUtcMinutes % 60;
+        let utcDay = dateObj.day;
+        let utcMonth = dateObj.month;
+        let utcYear = dateObj.year;
+        
+        // Handle day rollover
+        if (utcHours < 0) {
+            utcHours += 24;
+            utcDay -= 1;
+            if (utcDay < 1) {
+                utcMonth -= 1;
+                if (utcMonth < 1) {
+                    utcMonth = 12;
+                    utcYear -= 1;
+                }
+                // Get last day of previous month
+                const daysInMonth = new Date(utcYear, utcMonth, 0).getDate();
+                utcDay = daysInMonth;
+            }
+        } else if (utcHours >= 24) {
+            utcHours -= 24;
+            const daysInMonth = new Date(utcYear, utcMonth, 0).getDate();
+            utcDay += 1;
+            if (utcDay > daysInMonth) {
+                utcDay = 1;
+                utcMonth += 1;
+                if (utcMonth > 12) {
+                    utcMonth = 1;
+                    utcYear += 1;
+                }
+            }
+        }
+        
+        if (utcMinutes < 0) {
+            utcMinutes += 60;
+            utcHours -= 1;
+        }
+        
+        // Create UTC date string (no timezone offset)
+        const year = utcYear;
+        const month = String(utcMonth).padStart(2, '0');
+        const day = String(utcDay).padStart(2, '0');
+        const hourStr = String(utcHours).padStart(2, '0');
+        const minStr = String(utcMinutes).padStart(2, '0');
+        
+        // Create Date object in UTC
+        const utcDateStr = `${year}-${month}-${day}T${hourStr}:${minStr}:00Z`;
+        return new Date(utcDateStr);
     }
 
     async showScheduledMeetings(interaction) {
