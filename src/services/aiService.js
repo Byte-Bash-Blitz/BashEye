@@ -1,10 +1,79 @@
 // src/services/aiService.js
-const { GoogleGenerativeAI } = require('@google/generative-ai');
 const config = require('../config/config');
 
-// Initialize the AI client
-const genAI = new GoogleGenerativeAI(config.gemini.apiKey);
-const genAIModel = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+/**
+ * Make a request to OpenRouter API
+ */
+async function makeOpenRouterRequest(prompt) {
+    try {
+        const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${config.openrouter.apiKey}`,
+                'Content-Type': 'application/json',
+                'HTTP-Referer': 'https://github.com/bash-eye',
+                'X-Title': 'BashEye Discord Bot'
+            },
+            body: JSON.stringify({
+                model: config.openrouter.model,
+                messages: [
+                    {
+                        role: 'user',
+                        content: prompt
+                    }
+                ]
+            })
+        });
+
+        if (!response.ok) {
+            const errorText = await response.text();
+            console.error(`OpenRouter API error: ${response.status} ${response.statusText}`);
+            console.error(`Error details: ${errorText}`);
+            throw new Error(`OpenRouter API error: ${response.status} ${response.statusText} - ${errorText}`);
+        }
+
+        const data = await response.json();
+        
+        // Validate response structure
+        if (!data.choices || !data.choices[0] || !data.choices[0].message) {
+            console.error('Invalid OpenRouter response structure:', data);
+            throw new Error('Invalid response structure from OpenRouter API');
+        }
+        
+        return data.choices[0].message.content;
+    } catch (error) {
+        console.error('Error in makeOpenRouterRequest:', error);
+        throw error;
+    }
+}
+
+/**
+ * Extract JSON from AI response text
+ */
+function extractJSON(text) {
+    try {
+        // Try direct JSON parse first
+        return JSON.parse(text);
+    } catch (e) {
+        // Try to find JSON within the text
+        const jsonMatch = text.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+            try {
+                return JSON.parse(jsonMatch[0]);
+            } catch (e2) {
+                console.error('Failed to parse extracted JSON:', e2);
+            }
+        }
+        // Try removing markdown code blocks
+        const cleaned = text.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
+        try {
+            return JSON.parse(cleaned);
+        } catch (e3) {
+            console.error('Failed to parse cleaned JSON:', e3);
+        }
+    }
+    return null;
+}
 
 /**
  * Validates the progress text for genuineness.
@@ -12,39 +81,47 @@ const genAIModel = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
  */
 async function validateProgressText(text) {
     try {
-        const prompt = `
-            You are a strict, witty, and slightly "savage" validator for a daily progress system on a server.
-            Your job is to determine if a user's post is a "genuine update" or "not genuine".
-            You MUST filter out clear spam, song lyrics, and posts that just try to meet the word count.
-            Progress can be about coding, design, personal life (reading, cleaning), or tech rants.
+        const prompt = `You are a strict, witty, and slightly "savage" validator for a daily progress system.
+Your job is to determine if a user's post is a "genuine update" or "not genuine".
+Filter out spam, song lyrics, and posts that just try to meet the word count.
+Progress can be about coding, design, personal life (reading, cleaning), or tech rants.
 
-            "Genuine update" (ALLOW THESE):
-            - Coding tasks, problems, concepts learned.
-            - Personal achievements (e.g., "was consistent", "read a book", "fixed my room").
-            - Tech rants (e.g., "I use Arch btw").
+"Genuine update" (ALLOW):
+- Coding tasks, problems, concepts learned.
+- Personal achievements (reading, cleaning, consistency).
+- Tech rants ("I use Arch btw").
 
-            "Not genuine" (BLOCK THESE):
-            - Obvious song lyrics.
-            - Spam, gibberish, or random keyboard mashing.
-            - Messages that ONLY talk about meeting the word count (e.g., "I am writing this just to get 35 words", "this is filler to pass the check", "I guess that's 35 words. Hehe").
-            - anything that seems like it's trying to game the system rather than share real progress.
-            - Repetitive messages that add no new information (e.g., "I am coding", "I am coding", "I am coding").
-            - Completely irrelevant content (e.g., "The sky is blue", "I like turtles").
+"Not genuine" (BLOCK):
+- Song lyrics.
+- Spam, gibberish, keyboard mashing.
+- Messages ONLY about meeting word count.
+- Gaming the system.
+- Repetitive filler.
+- Completely irrelevant content.
 
-            Analyze the user text. Return a JSON object in this exact format:
-            {"isGenuine": true/false, "reason": "A brief, witty, or 'savage' explanation for your decision if not genuine, or a simple 'OK' if genuine."}
+Analyze the user text. Return ONLY a JSON object in this exact format:
+{"isGenuine": true, "reason": "OK"}
+or
+{"isGenuine": false, "reason": "Brief witty explanation"}
 
-            User Text:
-            "${text}"
-        `;
+User Text:
+"${text.replace(/"/g, '\\"')}"`;
 
-        const result = await genAIModel.generateContent(prompt);
-        const response = await result.response;
-        const responseText = response.text();
+        const responseText = await makeOpenRouterRequest(prompt);
+        console.log('Raw AI validation response:', responseText);
         
-        // Clean up the response and parse it as JSON
-        const jsonResponse = responseText.replace(/```json/g, '').replace(/```/g, '').trim();
-        return JSON.parse(jsonResponse);
+        const parsed = extractJSON(responseText);
+        
+        if (!parsed || typeof parsed.isGenuine !== 'boolean') {
+            console.error('Failed to parse valid JSON from AI response:', responseText);
+            // Fail open - allow the message if AI can't validate properly
+            return { 
+                isGenuine: true, 
+                reason: 'AI validation parsing failed.' 
+            };
+        }
+        
+        return parsed;
 
     } catch (error) {
         console.error('Error in AI validation:', error);
@@ -60,30 +137,35 @@ async function validateProgressText(text) {
  */
 async function getEnhancedFeedback(text) {
     try {
-        const prompt = `
-            A user just posted a genuine progress update. Provide helpful, constructive feedback in a JSON format.
-            Analyze the text for:
-            1.  **grammar**: A brief comment on grammar or clarity, pinpoint the issues. If it's good, say so. If not, provide one small tip.
-            2.  **suggestion**: A simple, actionable suggestion for their next step or to improve their post.
-            3.  **topic**: Identify the single main topic (e.g., "JavaScript", "React", "Personal Consistency", "Reading", "Time Management").
+        const prompt = `You are a friendly AI coach providing detailed constructive feedback on daily progress updates.
 
-            Return a JSON object in this exact format:
-            {"grammar": "...", "suggestion": "...", "topic": "..."}
+Analyze this progress update and provide feedback in JSON format:
+{"grammar": "Grammar/clarity feedback (2-3 sentences, be specific)", "suggestion": "Detailed actionable suggestion for next steps (3-4 sentences, be practical and encouraging)", "topic": "Main topic (e.g., 'JavaScript', 'fitness', 'design')"}
 
-            User Text:
-            "${text}"
-        `;
+IMPORTANT: 
+- Grammar field: 15-30 words
+- Suggestion field: 30-60 words
+- Be specific, encouraging, and actionable
+- Total feedback should be 50-100 words
 
-        const result = await genAIModel.generateContent(prompt);
-        const response = await result.response;
-        const responseText = response.text();
+User Text:
+"${text.replace(/"/g, '\\"')}"`;
 
-        const jsonResponse = responseText.replace(/```json/g, '').replace(/```/g, '').trim();
-        return JSON.parse(jsonResponse);
+        const responseText = await makeOpenRouterRequest(prompt);
+        console.log('Raw AI feedback response:', responseText);
+        
+        const parsed = extractJSON(responseText);
+        
+        if (!parsed || !parsed.topic) {
+            console.error('Failed to parse feedback JSON:', responseText);
+            return null;
+        }
+        
+        return parsed;
 
     } catch (error) {
-        console.error('Error in AI feedback generation:', error);
-        return null; // Return null if feedback generation fails
+        console.error('Error in enhanced feedback:', error);
+        return null;
     }
 }
 
@@ -92,16 +174,15 @@ async function getEnhancedFeedback(text) {
  */
 async function getRelevantFact(topic) {
     try {
-        const prompt = `Give me one interesting, short fact or insightful quote related to "${topic}".`;
-        
-        const result = await genAIModel.generateContent(prompt);
-        const response = await result.response;
-        return response.text().trim().replace(/"/g, ''); // Clean up quotes
+        const prompt = `Provide ONE interesting and brief fact (max 150 characters) related to: ${topic}
+Return ONLY the fact as plain text, no quotes, no extra formatting.`;
+
+        const fact = await makeOpenRouterRequest(prompt);
+        return fact.trim();
 
     } catch (error) {
-        console.error('Error getting random fact:', error);
-        // Provide a good fallback quote
-        return "The secret of getting ahead is getting started. – Mark Twain"; 
+        console.error('Error generating fact:', error);
+        return null;
     }
 }
 

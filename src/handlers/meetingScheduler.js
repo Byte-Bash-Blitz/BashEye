@@ -43,10 +43,13 @@ class MeetingScheduler {
         const user = await this.client.users.fetch(userId).catch(() => null);
         if (!user || user.bot) return;
 
+        // Get display name (server nickname or global display name)
+        const member = newState.member || oldState.member;
+        const displayName = member?.displayName || user.displayName || user.username;
         const username = user.username;
         const now = Date.now();
 
-        console.log(`🎤 Voice update: ${username} | Old: ${oldState.channelId} | New: ${newState.channelId} | Active meetings: ${this.activeMeetings.size}`);
+        console.log(`🎤 Voice update: ${displayName} | Old: ${oldState.channelId} | New: ${newState.channelId} | Active meetings: ${this.activeMeetings.size}`);
 
         for (const [meetingId, meeting] of this.activeMeetings.entries()) {
             console.log(`   Checking meeting: ${meeting.topic} in channel ${meeting.channelId}`);
@@ -57,18 +60,20 @@ class MeetingScheduler {
             if (newChannelId === meetingChannelId && oldChannelId !== meetingChannelId) {
                 if (!meeting.participants.has(userId)) {
                     meeting.participants.set(userId, {
+                        displayName: displayName,
                         username: username,
                         joinedAt: now,
                         leftAt: null,
                         totalSeconds: 0,
                         sessions: []
                     });
-                    console.log(`➕ ${username} joined ${meeting.topic} (NEW participant)`);
+                    console.log(`➕ ${displayName} joined ${meeting.topic} (NEW participant)`);
                 } else {
                     const participant = meeting.participants.get(userId);
+                    participant.displayName = displayName; // Update in case name changed
                     participant.joinedAt = now;
                     participant.leftAt = null;
-                    console.log(`➕ ${username} rejoined ${meeting.topic}`);
+                    console.log(`➕ ${displayName} rejoined ${meeting.topic}`);
                 }
             }
 
@@ -83,9 +88,9 @@ class MeetingScheduler {
                         leftAt: now,
                         duration: sessionDuration
                     });
-                    console.log(`➖ ${username} left ${meeting.topic} (${Math.floor(sessionDuration / 60)}m ${sessionDuration % 60}s)`);
+                    console.log(`➖ ${displayName} left ${meeting.topic} (${Math.floor(sessionDuration / 60)}m ${sessionDuration % 60}s)`);
                 } else if (!participant) {
-                    console.log(`⚠️ ${username} left ${meeting.topic} but wasn't tracked as participant`);
+                    console.log(`⚠️ ${displayName} left ${meeting.topic} but wasn't tracked as participant`);
                 }
             }
         }
@@ -157,14 +162,16 @@ class MeetingScheduler {
 
         presentMembers.forEach(member => {
             if (!member.user.bot) {
+                const displayName = member.displayName || member.user.displayName || member.user.username;
                 participants.set(member.id, {
+                    displayName: displayName,
                     username: member.user.username,
                     joinedAt: startTime,
                     leftAt: null,
                     totalSeconds: 0,
                     sessions: []
                 });
-                console.log(`👤 Initial participant: ${member.user.username}`);
+                console.log(`👤 Initial participant: ${displayName}`);
             }
         });
         
@@ -253,7 +260,7 @@ class MeetingScheduler {
 
             if (timeInScheduledPeriod > 0) {
                 attendanceSnapshot.push({
-                    username: participant.username,
+                    displayName: participant.displayName || participant.username,
                     seconds: timeInScheduledPeriod
                 });
             }
@@ -272,7 +279,7 @@ class MeetingScheduler {
                 const mins = Math.floor(p.seconds / 60);
                 const percentage = Math.round((p.seconds / (scheduledDuration / 1000)) * 100);
                 const badge = percentage >= 95 ? ' ⭐' : '';
-                summary += `• **${p.username}** - ${mins}m (${percentage}%)${badge}\n`;
+                summary += `• **${p.displayName}** - ${mins}m (${percentage}%)${badge}\n`;
             });
         }
 
@@ -313,7 +320,7 @@ class MeetingScheduler {
 
             if (totalSeconds > 0) {
                 finalAttendance.push({
-                    username: participant.username,
+                    displayName: participant.displayName || participant.username,
                     seconds: totalSeconds
                 });
             }
@@ -341,7 +348,7 @@ class MeetingScheduler {
                 const mins = Math.floor(p.seconds / 60);
                 const percentage = Math.round((p.seconds / (totalDuration / 1000)) * 100);
                 const badge = percentage >= 95 ? ' ⭐' : '';
-                summary += `• **${p.username}** - ${mins}m (${percentage}%)${badge}\n`;
+                summary += `• **${p.displayName}** - ${mins}m (${percentage}%)${badge}\n`;
             });
 
             const fullAttendance = finalAttendance.filter(p => p.seconds >= (totalDuration / 1000) * 0.95).length;
@@ -629,60 +636,24 @@ class MeetingScheduler {
         if (period === 'PM' && hours !== 12) hours += 12;
         if (period === 'AM' && hours === 12) hours = 0;
 
-        // Convert IST to UTC (same logic as node-cron)
-        // IST is UTC+5:30, so we subtract 5 hours 30 minutes to get UTC
-        const totalIstMinutes = hours * 60 + minutes;
-        const totalUtcMinutes = totalIstMinutes - (5 * 60 + 30);
+        // Create date string in ISO format for IST timezone
+        // We need to create a date that represents the IST time
+        const year = dateObj.year;
+        const month = String(dateObj.month).padStart(2, '0');
+        const day = String(dateObj.day).padStart(2, '0');
+        const hourStr = String(hours).padStart(2, '0');
+        const minStr = String(minutes).padStart(2, '0');
         
-        let utcHours = Math.floor(totalUtcMinutes / 60);
-        let utcMinutes = totalUtcMinutes % 60;
-        let utcDay = dateObj.day;
-        let utcMonth = dateObj.month;
-        let utcYear = dateObj.year;
+        // Create ISO string with IST offset (+05:30)
+        const istDateStr = `${year}-${month}-${day}T${hourStr}:${minStr}:00.000+05:30`;
+        const date = new Date(istDateStr);
         
-        // Handle day rollover
-        if (utcHours < 0) {
-            utcHours += 24;
-            utcDay -= 1;
-            if (utcDay < 1) {
-                utcMonth -= 1;
-                if (utcMonth < 1) {
-                    utcMonth = 12;
-                    utcYear -= 1;
-                }
-                // Get last day of previous month
-                const daysInMonth = new Date(utcYear, utcMonth, 0).getDate();
-                utcDay = daysInMonth;
-            }
-        } else if (utcHours >= 24) {
-            utcHours -= 24;
-            const daysInMonth = new Date(utcYear, utcMonth, 0).getDate();
-            utcDay += 1;
-            if (utcDay > daysInMonth) {
-                utcDay = 1;
-                utcMonth += 1;
-                if (utcMonth > 12) {
-                    utcMonth = 1;
-                    utcYear += 1;
-                }
-            }
-        }
+        console.log(`🕐 Parsing time: ${timeStr} on ${day}/${month}/${year}`);
+        console.log(`🕐 Created IST string: ${istDateStr}`);
+        console.log(`🕐 Resulting UTC date: ${date.toISOString()}`);
+        console.log(`🕐 Resulting IST display: ${date.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}`);
         
-        if (utcMinutes < 0) {
-            utcMinutes += 60;
-            utcHours -= 1;
-        }
-        
-        // Create UTC date string (no timezone offset)
-        const year = utcYear;
-        const month = String(utcMonth).padStart(2, '0');
-        const day = String(utcDay).padStart(2, '0');
-        const hourStr = String(utcHours).padStart(2, '0');
-        const minStr = String(utcMinutes).padStart(2, '0');
-        
-        // Create Date object in UTC
-        const utcDateStr = `${year}-${month}-${day}T${hourStr}:${minStr}:00Z`;
-        return new Date(utcDateStr);
+        return date;
     }
 
     async showScheduledMeetings(interaction) {

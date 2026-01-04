@@ -171,8 +171,9 @@ module.exports = {
         url: process.env.SUPABASE_URL,
         key: process.env.SUPABASE_ANON_KEY
     },
-    gemini: {
-        apiKey: process.env.GEMINI_API_KEY
+    openrouter: {
+        apiKey: process.env.OPENROUTER_API_KEY,
+        model: 'google/gemini-2.0-flash-lite-001'
     },
     points: {
         organiserIdBot: 77,
