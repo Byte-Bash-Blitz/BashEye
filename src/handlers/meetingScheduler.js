@@ -1,4 +1,17 @@
 // src/handlers/meetingScheduler.js
+// 
+// TIMEZONE HANDLING (IST - Indian Standard Time, UTC+5:30):
+// =========================================================
+// 1. User Input: Times are entered in IST (e.g., "9:35 PM")
+// 2. Storage: Dates are stored as JavaScript Date objects (UTC internally)
+// 3. Display: All times shown to users use { timeZone: 'Asia/Kolkata' }
+// 4. Comparisons: Date.now() and date.getTime() work in UTC milliseconds
+// 5. Cron Job: Runs with timezone: 'Asia/Kolkata' for accurate scheduling
+// 6. Date Creation: ISO strings use +05:30 offset (e.g., "2026-01-10T21:35:00.000+05:30")
+//
+// This ensures meetings scheduled for "9:35 PM IST" start at exactly 9:35 PM IST,
+// regardless of the server's system timezone (Render uses UTC).
+//
 const { 
     EmbedBuilder, 
     ActionRowBuilder, 
@@ -107,10 +120,36 @@ class MeetingScheduler {
 
     async checkScheduledMeetings() {
         const now = Date.now();
+        const nowIST = new Date(now).toLocaleString('en-IN', { 
+            timeZone: 'Asia/Kolkata',
+            hour: '2-digit',
+            minute: '2-digit',
+            hour12: true,
+            day: '2-digit',
+            month: 'short'
+        });
+
+        // Only log if there are scheduled meetings to avoid spam
+        if (this.scheduledMeetings.size > 0) {
+            console.log(`⏰ Cron check at ${nowIST} IST - ${this.scheduledMeetings.size} scheduled meeting(s)`);
+        }
 
         for (const [meetingId, meeting] of this.scheduledMeetings.entries()) {
-            if (meeting.status === 'scheduled' && meeting.startTime.getTime() <= now) {
-                await this.startMeeting(meetingId, meeting);
+            if (meeting.status === 'scheduled') {
+                const meetingStartIST = meeting.startTime.toLocaleString('en-IN', { 
+                    timeZone: 'Asia/Kolkata',
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    hour12: true
+                });
+                const timeUntilStart = meeting.startTime.getTime() - now;
+                
+                if (timeUntilStart <= 0) {
+                    console.log(`🎬 Starting meeting "${meeting.topic}" scheduled for ${meetingStartIST}`);
+                    await this.startMeeting(meetingId, meeting);
+                } else if (timeUntilStart < 60000) { // Less than 1 minute
+                    console.log(`⏳ Meeting "${meeting.topic}" starts in ${Math.ceil(timeUntilStart / 1000)}s at ${meetingStartIST}`);
+                }
             }
         }
 
@@ -419,6 +458,12 @@ class MeetingScheduler {
                 return;
             }
         } catch (error) {
+            // Check if error is due to expired interaction
+            if (error.code === 10062 || error.code === 40060) {
+                console.error('⏱️ Interaction expired or already acknowledged - this is normal on slow networks');
+                return;
+            }
+            
             console.error('❌ Error handling interaction:', error);
             
             if (!interaction.replied && !interaction.deferred) {
@@ -480,11 +525,29 @@ class MeetingScheduler {
             )
         );
 
-        await interaction.showModal(modal);
+        try {
+            await interaction.showModal(modal);
+        } catch (error) {
+            // Interaction expired before modal could be shown
+            if (error.code === 10062) {
+                console.log('⏱️ Button interaction expired before showModal');
+                return;
+            }
+            throw error;
+        }
     }
 
     async handleScheduleSubmission(interaction) {
-        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+        try {
+            await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+        } catch (error) {
+            // Interaction expired before we could defer
+            if (error.code === 10062) {
+                console.log('⏱️ Modal submission interaction expired before deferReply');
+                return;
+            }
+            throw error;
+        }
 
         try {
             const topic = interaction.fields.getTextInputValue('meeting_topic');
@@ -516,13 +579,20 @@ class MeetingScheduler {
             } else {
                 // Use current IST date when date field is empty
                 const now = new Date();
-                const istOffset = 5.5 * 60 * 60 * 1000; // IST is UTC+5:30
-                const istDate = new Date(now.getTime() + istOffset);
+                // Get current date in IST timezone
+                const istDateStr = now.toLocaleString('en-CA', { 
+                    timeZone: 'Asia/Kolkata',
+                    year: 'numeric',
+                    month: '2-digit',
+                    day: '2-digit'
+                }); // Format: YYYY-MM-DD
+                const [year, month, day] = istDateStr.split('-');
                 dateObj = {
-                    year: istDate.getUTCFullYear(),
-                    month: istDate.getUTCMonth() + 1,
-                    day: istDate.getUTCDate()
+                    year: parseInt(year),
+                    month: parseInt(month),
+                    day: parseInt(day)
                 };
+                console.log(`📅 Using current IST date: ${day}/${month}/${year}`);
             }
 
             const startTime = this.parseTime(startTimeStr, dateObj);
@@ -544,8 +614,17 @@ class MeetingScheduler {
                 return;
             }
 
-            if (startTime.getTime() <= Date.now()) {
-                await interaction.editReply('❌ Start time must be in the future');
+            // Allow 1 minute grace period for scheduling (to account for processing time)
+            const gracePeriod = 60 * 1000; // 1 minute
+            if (startTime.getTime() <= (Date.now() - gracePeriod)) {
+                const nowIST = new Date().toLocaleString('en-IN', { 
+                    timeZone: 'Asia/Kolkata',
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    hour12: true
+                });
+                console.log(`⏰ Start time check - Meeting: ${startTime.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}, Current IST: ${nowIST}`);
+                await interaction.editReply(`❌ Start time must be in the future (Current IST time: ${nowIST})`);
                 return;
             }
 
@@ -577,8 +656,8 @@ class MeetingScheduler {
                             .addFields(
                                 { name: '👤 Scheduled By', value: `<@${interaction.user.id}>`, inline: true },
                                 { name: '📍 Location', value: `<#${channel.id}>`, inline: true },
-                                { name: '📅 Date', value: startTime.toLocaleDateString('en-IN', { weekday: 'short', year: 'numeric', month: 'short', day: 'numeric' }), inline: false },
-                                { name: '🕐 Time', value: `${startTime.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })} - ${endTime.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}`, inline: true },
+                                { name: '📅 Date', value: startTime.toLocaleDateString('en-IN', { weekday: 'short', year: 'numeric', month: 'short', day: 'numeric', timeZone: 'Asia/Kolkata' }), inline: false },
+                                { name: '🕐 Time', value: `${startTime.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Kolkata' })} - ${endTime.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Kolkata' })}`, inline: true },
                                 { name: '⏱️ Duration', value: `${Math.floor(duration / 60)}h ${duration % 60}m`, inline: true }
                             )
                             .setFooter({ text: `Meeting ID: ${meetingId}` })
@@ -613,7 +692,7 @@ class MeetingScheduler {
                         `Your meeting has been scheduled and automated attendance tracking is now enabled.\n\n` +
                         `**${topic}**\n` +
                         `📍 ${channel.name}\n` +
-                        `🕐 ${startTime.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}`
+                        `🕐 ${startTime.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Kolkata' })}`
                     )
                     .setFooter({ text: `Meeting ID: ${meetingId}` })
                 ]
@@ -633,11 +712,18 @@ class MeetingScheduler {
         const minutes = parseInt(match[2]);
         const period = match[3].toUpperCase();
 
+        // Validate time components
+        if (hours < 1 || hours > 12 || minutes < 0 || minutes > 59) {
+            console.log(`❌ Invalid time values: ${hours}:${minutes} ${period}`);
+            return null;
+        }
+
+        // Convert to 24-hour format
         if (period === 'PM' && hours !== 12) hours += 12;
         if (period === 'AM' && hours === 12) hours = 0;
 
         // Create date string in ISO format for IST timezone
-        // We need to create a date that represents the IST time
+        // This creates a Date object that represents the IST time
         const year = dateObj.year;
         const month = String(dateObj.month).padStart(2, '0');
         const day = String(dateObj.day).padStart(2, '0');
@@ -645,13 +731,14 @@ class MeetingScheduler {
         const minStr = String(minutes).padStart(2, '0');
         
         // Create ISO string with IST offset (+05:30)
+        // This tells JavaScript: "This time is in IST timezone"
         const istDateStr = `${year}-${month}-${day}T${hourStr}:${minStr}:00.000+05:30`;
         const date = new Date(istDateStr);
         
         console.log(`🕐 Parsing time: ${timeStr} on ${day}/${month}/${year}`);
         console.log(`🕐 Created IST string: ${istDateStr}`);
-        console.log(`🕐 Resulting UTC date: ${date.toISOString()}`);
-        console.log(`🕐 Resulting IST display: ${date.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}`);
+        console.log(`🕐 Resulting UTC timestamp: ${date.getTime()}`);
+        console.log(`🕐 Resulting IST display: ${date.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', hour12: true })}`);
         
         return date;
     }
@@ -676,7 +763,7 @@ class MeetingScheduler {
             const duration = Math.round((m.endTime - m.startTime) / (1000 * 60));
             embed.addFields({
                 name: `📝 ${m.topic}`,
-                value: `🆔 \`${m.id}\`\n📍 ${m.channelName}\n📅 ${m.startTime.toLocaleDateString('en-IN')} ${m.startTime.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}\n⏱️ ${Math.floor(duration / 60)}h ${duration % 60}m`,
+                value: `🆔 \`${m.id}\`\n📍 ${m.channelName}\n📅 ${m.startTime.toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' })} ${m.startTime.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Kolkata' })}\n⏱️ ${Math.floor(duration / 60)}h ${duration % 60}m`,
                 inline: false
             });
         });
