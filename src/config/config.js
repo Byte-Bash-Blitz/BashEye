@@ -162,7 +162,7 @@ function getISTDateString(date = null) {
 module.exports = {
     discord: {
         token: process.env.DISCORD_BOT_TOKEN,
-        clientId: '1192867500087506346',
+        clientId: '1192867500875063346',
         guildId: process.env.DISCORD_GUILD_ID,
         basherProgressCategoryId: '1351223065354178722', // Basher Progress category ID
         categoryName: 'Basher Progress'
