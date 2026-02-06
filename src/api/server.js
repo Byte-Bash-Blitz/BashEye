@@ -26,9 +26,15 @@ class APIServer {
     setupRoutes() {
         // Health check
         this.app.get('/', (req, res) => {
-            res.json({
+            res.status(200).send('BashEye Bot is running! 🤖');
+        });
+
+        this.app.get('/health', (req, res) => {
+            res.status(200).json({
                 status: 'healthy',
+                bot: 'BashEye',
                 service: 'Discord Bot API',
+                uptime: process.uptime(),
                 timestamp: new Date().toISOString(),
                 version: '2.0.0'
             });
@@ -201,7 +207,7 @@ class APIServer {
     start() {
         return new Promise((resolve, reject) => {
             try {
-                this.server = this.app.listen(config.server.port, () => {
+                this.server = this.app.listen(config.server.port, '0.0.0.0', () => {
                     console.log(`🚀 API Server running on http://localhost:${config.server.port}`);
                     resolve(this.server);
                 });

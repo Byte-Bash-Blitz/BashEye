@@ -50,13 +50,13 @@ async function main() {
         console.log(`📝 Environment: ${process.env.NODE_ENV || 'development'}`);
         console.log(`🔧 Configuration loaded successfully`);
         
+        // Start API server first so Render detects the port binding quickly
+        console.log('\n🌐 Starting API server...');
+        await apiServer.start();
+        
         // Start Discord bot
         console.log('\n🤖 Initializing Discord client...');
         await discordClient.start();
-        
-        // Start API server
-        console.log('\n🌐 Starting API server...');
-        await apiServer.start();
         
         console.log('\n✅ All services started successfully!');
         console.log(`🔗 API available at: http://localhost:${config.server.port}`);
