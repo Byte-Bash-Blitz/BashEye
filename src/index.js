@@ -56,11 +56,16 @@ async function main() {
         
         // Start Discord bot
         console.log('\n🤖 Initializing Discord client...');
-        await discordClient.start();
+        try {
+            await discordClient.start();
+            console.log(`🤖 Bot status: ${discordClient.isReady() ? 'Online ✅' : 'Offline ❌'}`);
+        } catch (error) {
+            console.error('❌ Discord bot failed to start:', error.message);
+            console.error('⚠️ Bot will continue running API server. Check DISCORD_BOT_TOKEN.');
+        }
         
-        console.log('\n✅ All services started successfully!');
+        console.log('\n✅ Services started!');
         console.log(`🔗 API available at: http://localhost:${config.server.port}`);
-        console.log(`🤖 Bot status: ${discordClient.isReady() ? 'Online' : 'Offline'}`);
         console.log('\n📊 Bot Features:');
         console.log('  • Daily progress point awarding (5 points)');
         console.log('  • Streak tracking and persistence');

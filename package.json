@@ -26,6 +26,9 @@
     "progress",
     "tracking"
   ],
+  "engines": {
+    "node": "20.x"
+  },
   "author": "Byte-Bash-Blitz Team",
   "license": "MIT"
 }
