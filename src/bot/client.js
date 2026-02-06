@@ -94,38 +94,10 @@ class DiscordClient {
 
     async start() {
         try {
-            console.log('🚀 Starting Discord bot...');
-            
-            // Validate token exists
-            if (!config.discord.token) {
-                throw new Error('DISCORD_BOT_TOKEN is not set! Check your environment variables.');
-            }
-            console.log(`🔑 Token present (length: ${config.discord.token.length})`);
-            
-            // Create a promise that resolves when the bot is fully ready
-            const readyPromise = new Promise((resolve) => {
-                this.client.once('clientReady', () => {
-                    resolve();
-                });
-            });
-            
-            // Login to Discord
-            console.log('🔗 Attempting Discord login...');
             await this.client.login(config.discord.token);
-            console.log('🔗 Discord login call completed, waiting for ready...');
-            
-            // Wait for clientReady with a 60-second timeout
-            const timeoutPromise = new Promise((_, reject) => 
-                setTimeout(() => reject(new Error('Discord clientReady timed out after 60 seconds')), 60000)
-            );
-            
-            await Promise.race([readyPromise, timeoutPromise]);
-            console.log('✅ Discord bot is fully ready');
-            
             return this.client;
         } catch (error) {
-            console.error('❌ Failed to start Discord bot:', error.message);
-            console.error('🔧 Make sure DISCORD_BOT_TOKEN is set correctly in environment variables');
+            console.error('Failed to start Discord bot:', error);
             throw error;
         }
     }
