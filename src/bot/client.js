@@ -102,28 +102,25 @@ class DiscordClient {
             }
             console.log(`🔑 Token present (length: ${config.discord.token.length})`);
             
-            // Add timeout to login to prevent hanging
-            const loginPromise = this.client.login(config.discord.token);
+            // Create a promise that resolves when the bot is fully ready
+            const readyPromise = new Promise((resolve) => {
+                this.client.once('clientReady', () => {
+                    resolve();
+                });
+            });
+            
+            // Login to Discord
+            console.log('🔗 Attempting Discord login...');
+            await this.client.login(config.discord.token);
+            console.log('🔗 Discord login call completed, waiting for ready...');
+            
+            // Wait for clientReady with a 60-second timeout
             const timeoutPromise = new Promise((_, reject) => 
-                setTimeout(() => reject(new Error('Discord login timed out after 30 seconds')), 30000)
+                setTimeout(() => reject(new Error('Discord clientReady timed out after 60 seconds')), 60000)
             );
             
-            await Promise.race([loginPromise, timeoutPromise]);
-            console.log('🔗 Discord login call resolved');
-            
-            // Wait for the client to be fully ready
-            if (!this.client.isReady()) {
-                console.log('⏳ Waiting for clientReady event...');
-                await new Promise((resolve, reject) => {
-                    const readyTimeout = setTimeout(() => {
-                        reject(new Error('Discord clientReady event timed out after 30 seconds'));
-                    }, 30000);
-                    this.client.once('ready', () => {
-                        clearTimeout(readyTimeout);
-                        resolve();
-                    });
-                });
-            }
+            await Promise.race([readyPromise, timeoutPromise]);
+            console.log('✅ Discord bot is fully ready');
             
             return this.client;
         } catch (error) {
