@@ -129,9 +129,10 @@ class MeetingScheduler {
             month: 'short'
         });
 
-        // Only log if there are scheduled meetings to avoid spam
-        if (this.scheduledMeetings.size > 0) {
-            console.log(`⏰ Cron check at ${nowIST} IST - ${this.scheduledMeetings.size} scheduled meeting(s)`);
+        // Only log if there are actually pending scheduled meetings
+        const pendingMeetings = [...this.scheduledMeetings.values()].filter(m => m.status === 'scheduled');
+        if (pendingMeetings.length > 0) {
+            console.log(`⏰ Cron check at ${nowIST} IST - ${pendingMeetings.length} scheduled meeting(s)`);
         }
 
         for (const [meetingId, meeting] of this.scheduledMeetings.entries()) {
@@ -431,6 +432,9 @@ class MeetingScheduler {
                 clearTimeout(this.messageDeletionTimers.get(meetingId));
                 this.messageDeletionTimers.delete(meetingId);
             }
+
+            // Remove completed meeting from the map so cron stops counting it
+            this.scheduledMeetings.delete(meetingId);
         }
 
         console.log(`✅ Meeting completed: ${meeting.topic}`);

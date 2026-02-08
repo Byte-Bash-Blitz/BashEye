@@ -213,15 +213,22 @@ class MessageHandler {
 
     async sendFeedback(message, feedbackText) {
         try {
+            // Discord has a 2000 character limit
+            if (feedbackText.length > 2000) {
+                console.warn(`⚠️ Feedback too long (${feedbackText.length} chars), truncating...`);
+                feedbackText = feedbackText.substring(0, 1997) + '...';
+            }
             // Try to send as a reply first
             await message.reply(feedbackText);
+            console.log(`📨 Reply sent in ${message.channel.name}`);
         } catch (error) {
-            console.error('Error sending reply, trying DM:', error);
+            console.error('Error sending reply:', error.message, '| Code:', error.code);
             try {
                 // Fallback to DM
                 await message.author.send(feedbackText);
+                console.log(`📨 DM sent to ${message.author.username}`);
             } catch (dmError) {
-                console.error('Error sending DM:', dmError);
+                console.error('Error sending DM:', dmError.message, '| Code:', dmError.code);
             }
         }
     }
@@ -254,8 +261,7 @@ class MessageHandler {
                 }
             }
             // --- END AI FEEDBACK BLOCK ---
-            // Send success feedback with streak and NEW AI feedback
-            // Send success feedback with streak and NEW AI feedback
+            // Send success feedback
             await this.sendFeedback(message, feedbackText);
         } catch (error) {
             console.error('Error sending success feedback:', error);

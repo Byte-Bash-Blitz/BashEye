@@ -140,13 +140,14 @@ async function getEnhancedFeedback(text) {
         const prompt = `You are a friendly AI coach providing detailed constructive feedback on daily progress updates.
 
 Analyze this progress update and provide feedback in JSON format:
-{"grammar": "Grammar/clarity feedback (2-3 sentences, be specific)", "suggestion": "Detailed actionable suggestion for next steps (3-4 sentences, be practical and encouraging)", "topic": "Main topic (e.g., 'JavaScript', 'fitness', 'design')"}
+{"grammar": "Grammar/clarity feedback", "suggestion": "Actionable suggestion for next steps", "topic": "Main topic (e.g., 'JavaScript', 'fitness', 'design')"}
 
 IMPORTANT: 
-- Grammar field: 15-30 words
-- Suggestion field: 30-60 words
-- Be specific, encouraging, and actionable
-- Total feedback should be 50-100 words
+- Grammar field: STRICTLY 10-15 words MAX, one short sentence
+- Suggestion field: STRICTLY 15-25 words MAX, one short sentence
+- Topic field: 1-3 words only
+- Be specific but extremely concise
+- Total feedback MUST be under 50 words
 
 User Text:
 "${text.replace(/"/g, '\\"')}"`;
@@ -174,8 +175,8 @@ User Text:
  */
 async function getRelevantFact(topic) {
     try {
-        const prompt = `Provide ONE interesting and brief fact (max 150 characters) related to: ${topic}
-Return ONLY the fact as plain text, no quotes, no extra formatting.`;
+        const prompt = `Provide ONE interesting fact in UNDER 80 characters related to: ${topic}
+Return ONLY the fact as plain text, no quotes, no extra formatting. Keep it very short.`;
 
         const fact = await makeOpenRouterRequest(prompt);
         return fact.trim();
