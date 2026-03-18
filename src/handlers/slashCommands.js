@@ -88,6 +88,12 @@ class SlashCommandHandler {
                     option.setName('user')
                         .setDescription('The member whose streak to restore')
                         .setRequired(true)
+                )
+                .addIntegerOption(option =>
+                    option.setName('streak')
+                        .setDescription('The correct streak BEFORE today\'s post (e.g., 20)')
+                        .setRequired(true)
+                        .setMinValue(1)
                 ),
             execute: (interaction) => this.executeRestoreStreakCommand(interaction)
         });
@@ -265,6 +271,7 @@ class SlashCommandHandler {
         await interaction.deferReply();
 
         const targetUser = interaction.options.getUser('user');
+        const targetStreak = interaction.options.getInteger('streak');
         const username = targetUser.username;
 
         try {
@@ -347,11 +354,10 @@ class SlashCommandHandler {
                 await database.backdateLastUpdated(memberId, yesterdayUTC.toISOString());
             }
 
-            // ── 6. Recalculate true streak after fixing the timeline
-            const newStreak = await streakService.calculateStreak(memberId);
-            await database.updateDiscordStreak(memberId, newStreak);
+            // ── 6. Set the streak to exactly what the organizer requested
+            await database.updateDiscordStreak(memberId, targetStreak);
 
-            console.log(`🔧 Organizer ${interaction.user.username} restored streak for ${username}. New computed streak: ${newStreak} days.`);
+            console.log(`🔧 Organizer ${interaction.user.username} restored streak for ${username} to ${targetStreak} days.`);
 
             // ── 7. Confirmation message as requested ──────────────────────────
             await interaction.editReply({
