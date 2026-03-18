@@ -277,12 +277,16 @@ class SlashCommandHandler {
                 return;
             }
 
-            // ── 3. Compute yesterday's IST date string ───────────────────────
+            // ── 3. Compute targeted date strings (Today, Yesterday, 2 days ago)
             const todayIST = config.convertToIST(new Date());
+            const todayISTString = todayIST.toISOString().split('T')[0];
+            // By default, if we award points now, we just use a recent UTC timestamp
+            const nowUTC = new Date().toISOString();
 
             const yesterdayIST = new Date(todayIST.getTime());
             yesterdayIST.setUTCDate(yesterdayIST.getUTCDate() - 1);
             const yesterdayISTString = yesterdayIST.toISOString().split('T')[0]; // YYYY-MM-DD
+            // Yesterday's backdated timestamp set to 14:30 UTC = 20:00 IST
             const yesterdayUTC = new Date(`${yesterdayISTString}T14:30:00.000Z`);
 
             const twoDaysAgoIST = new Date(todayIST.getTime());
@@ -301,23 +305,53 @@ class SlashCommandHandler {
                 return;
             }
 
-            // ── 5. Award 5 backdated points for missed day (if not already done)
+            // ── 5. Fix Out-of-Order Logs (If user posted today but missed yesterday)
+            const todayDescription = `PU-${todayIST.getUTCDate()}${months[todayIST.getUTCMonth()]}'${todayIST.getUTCFullYear().toString().slice(-2)}`;
             const missedDayDescription = `PU-${yesterdayIST.getUTCDate()}${months[yesterdayIST.getUTCMonth()]}'${yesterdayIST.getUTCFullYear().toString().slice(-2)}`;
 
-            const alreadyHasPoints = await database.checkDailyPointsAwarded(memberId, missedDayDescription);
-            if (!alreadyHasPoints) {
+            const hasTodayPoints = await database.checkDailyPointsAwarded(memberId, todayDescription);
+            const alreadyHasMissedPoints = await database.checkDailyPointsAwarded(memberId, missedDayDescription);
+
+            // If they posted today, but actually missed yesterday...
+            // We must rewrite today's points into yesterday's slot to preserve chronological order,
+            // then award them fresh points for today.
+            if (hasTodayPoints && !alreadyHasMissedPoints) {
+                // Change the existing "Today" row to "Yesterday" with yesterday's timestamp
+                await database.getClient().then(client => 
+                    client.from('points')
+                          .update({ description: missedDayDescription, updated_at: yesterdayUTC.toISOString() })
+                          .eq('member_id', memberId)
+                          .eq('description', todayDescription)
+                );
+                
+                // Now give them their points for Today back, using the current timestamp
+                await database.awardPointsBackdated(
+                    memberId,
+                    config.points.dailyAmount,
+                    todayDescription,
+                    nowUTC
+                );
+
+                // Update their last stat timestamp to Right Now since they effectively posted today
+                await database.backdateLastUpdated(memberId, nowUTC);
+            } else if (!alreadyHasMissedPoints) {
+                // They didn't post today either, so just directly fill yesterday's gap
                 await database.awardPointsBackdated(
                     memberId,
                     config.points.dailyAmount,
                     missedDayDescription,
                     yesterdayUTC.toISOString()
                 );
+                
+                // Backdate last_updated_at to yesterday so today is still pending
+                await database.backdateLastUpdated(memberId, yesterdayUTC.toISOString());
             }
 
-            // ── 6. Backdate last_updated_at to yesterday ──────────────────────
-            await database.backdateLastUpdated(memberId, yesterdayUTC.toISOString());
+            // ── 6. Recalculate true streak after fixing the timeline
+            const newStreak = await streakService.calculateStreak(memberId);
+            await database.updateDiscordStreak(memberId, newStreak);
 
-            console.log(`🔧 Organizer ${interaction.user.username} restored streak for ${username}`);
+            console.log(`🔧 Organizer ${interaction.user.username} restored streak for ${username}. New computed streak: ${newStreak} days.`);
 
             // ── 7. Confirmation message as requested ──────────────────────────
             await interaction.editReply({
