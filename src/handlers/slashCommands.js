@@ -78,6 +78,19 @@ class SlashCommandHandler {
                 .setDescription('Check bot latency and status'),
             execute: (interaction) => this.executePingCommand(interaction)
         });
+
+        // Restore streak command (organizer only)
+        this.commands.set('restore-streak', {
+            data: new SlashCommandBuilder()
+                .setName('restore-streak')
+                .setDescription('🔧 [Organizer] Restore a member\'s missing streak day')
+                .addUserOption(option =>
+                    option.setName('user')
+                        .setDescription('The member whose streak to restore')
+                        .setRequired(true)
+                ),
+            execute: (interaction) => this.executeRestoreStreakCommand(interaction)
+        });
     }
 
     getStreakStatusMessage(streak) {
@@ -236,6 +249,88 @@ class SlashCommandHandler {
             });
         }
     }
+
+    async executeRestoreStreakCommand(interaction) {
+        // ── 1. Organizer role check ──────────────────────────────────────────
+        const member = interaction.member;
+        const hasRole = member.roles.cache.has(config.discord.organizerRoleId);
+        if (!hasRole) {
+            await interaction.reply({
+                content: '🚫 **Access Denied**\nOnly organizers can use this command.',
+                ephemeral: true
+            });
+            return;
+        }
+
+        await interaction.deferReply();
+
+        const targetUser = interaction.options.getUser('user');
+        const username = targetUser.username;
+
+        try {
+            // ── 2. Resolve member ID ─────────────────────────────────────────
+            const memberId = await database.getMemberByDiscordUsername(username);
+            if (!memberId) {
+                await interaction.editReply({
+                    content: `❌ **Member Not Found**\n\n\`${username}\` is not registered in the system.`
+                });
+                return;
+            }
+
+            // ── 3. Compute yesterday's IST date string ───────────────────────
+            const todayIST = config.convertToIST(new Date());
+
+            const yesterdayIST = new Date(todayIST.getTime());
+            yesterdayIST.setUTCDate(yesterdayIST.getUTCDate() - 1);
+            const yesterdayISTString = yesterdayIST.toISOString().split('T')[0]; // YYYY-MM-DD
+            const yesterdayUTC = new Date(`${yesterdayISTString}T14:30:00.000Z`);
+
+            const twoDaysAgoIST = new Date(todayIST.getTime());
+            twoDaysAgoIST.setUTCDate(twoDaysAgoIST.getUTCDate() - 2);
+
+            const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+            // ── 4. Verify 1-day gap (or if we already restored yesterday) ────
+            const twoDaysAgoDescription = `PU-${twoDaysAgoIST.getUTCDate()}${months[twoDaysAgoIST.getUTCMonth()]}'${twoDaysAgoIST.getUTCFullYear().toString().slice(-2)}`;
+            const hasTwoDaysAgoPoints = await database.checkDailyPointsAwarded(memberId, twoDaysAgoDescription);
+
+            if (!hasTwoDaysAgoPoints) {
+                await interaction.editReply({
+                    content: `❌ **Restore Failed:** \`${username}\` missed more than 1 day (No points found for \`${twoDaysAgoDescription}\`). You can only restore streaks with exactly a 1-day gap.`
+                });
+                return;
+            }
+
+            // ── 5. Award 5 backdated points for missed day (if not already done)
+            const missedDayDescription = `PU-${yesterdayIST.getUTCDate()}${months[yesterdayIST.getUTCMonth()]}'${yesterdayIST.getUTCFullYear().toString().slice(-2)}`;
+
+            const alreadyHasPoints = await database.checkDailyPointsAwarded(memberId, missedDayDescription);
+            if (!alreadyHasPoints) {
+                await database.awardPointsBackdated(
+                    memberId,
+                    config.points.dailyAmount,
+                    missedDayDescription,
+                    yesterdayUTC.toISOString()
+                );
+            }
+
+            // ── 6. Backdate last_updated_at to yesterday ──────────────────────
+            await database.backdateLastUpdated(memberId, yesterdayUTC.toISOString());
+
+            console.log(`🔧 Organizer ${interaction.user.username} restored streak for ${username}`);
+
+            // ── 7. Confirmation message as requested ──────────────────────────
+            await interaction.editReply({
+                content: `streak restored by organizer ${interaction.user.toString()} and post todays progress for maintain todays progress ${targetUser.toString()}`
+            });
+        } catch (error) {
+            console.error('Error in restore-streak command:', error);
+            await interaction.editReply({
+                content: '❌ An error occurred while restoring the streak. Please try again.'
+            });
+        }
+    }
+
 
     async executePingCommand(interaction) {
         const sent = await interaction.reply({ content: '🏓 Pinging...', fetchReply: true, ephemeral: true });

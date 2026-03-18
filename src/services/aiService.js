@@ -16,6 +16,8 @@ async function makeOpenRouterRequest(prompt) {
             },
             body: JSON.stringify({
                 model: config.openrouter.model,
+                temperature: 0,
+                max_tokens: 300,
                 messages: [
                     {
                         role: 'user',

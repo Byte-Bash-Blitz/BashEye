@@ -260,6 +260,83 @@ class SupabaseService {
             return [];
         }
     }
-}
 
+    // Award points with a custom (backdated) timestamp
+    async awardPointsBackdated(memberId, points, description, backdatedTimestamp) {
+        try {
+            const client = await this.getClient();
+            const { data, error } = await client
+                .from('points')
+                .insert({
+                    member_id: memberId,
+                    organiser_id: config.points.organiserIdBot,
+                    points: points,
+                    description: description,
+                    updated_at: backdatedTimestamp
+                })
+                .select()
+                .single();
+
+            if (error) {
+                console.error('Error inserting backdated points:', error);
+                return false;
+            }
+
+            return true;
+        } catch (error) {
+            console.error('Error in awardPointsBackdated:', error);
+            return false;
+        }
+    }
+
+    // Update member_stats.last_updated_at to a specific timestamp (for streak restoration)
+    async backdateLastUpdated(memberId, timestamp) {
+        try {
+            const client = await this.getClient();
+            const { data, error } = await client
+                .from('member_stats')
+                .update({ last_updated_at: timestamp })
+                .eq('member_id', memberId)
+                .select()
+                .single();
+
+            if (error) {
+                console.error('Error backdating last_updated_at:', error);
+                return false;
+            }
+
+            return true;
+        } catch (error) {
+            console.error('Error in backdateLastUpdated:', error);
+            return false;
+        }
+    }
+
+    // Update the updated_at timestamp of an existing points row (Option D backdate)
+    async updatePointsRowTimestamp(memberId, description, newTimestamp) {
+        try {
+            const client = await this.getClient();
+            const { data, error } = await client
+                .from('points')
+                .update({ updated_at: newTimestamp })
+                .eq('member_id', memberId)
+                .eq('organiser_id', config.points.organiserIdBot)
+                .eq('description', description)
+                .select()
+                .single();
+
+            if (error) {
+                console.error('Error updating points row timestamp:', error);
+                return false;
+            }
+
+            return true;
+        } catch (error) {
+            console.error('Error in updatePointsRowTimestamp:', error);
+            return false;
+        }
+    }
+
+
+}
 module.exports = new SupabaseService();

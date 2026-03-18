@@ -165,7 +165,8 @@ module.exports = {
         clientId: '1192867500875063346',
         guildId: process.env.DISCORD_GUILD_ID,
         basherProgressCategoryId: '1351223065354178722', // Basher Progress category ID
-        categoryName: 'Basher Progress'
+        categoryName: 'Basher Progress',
+        organizerRoleId: process.env.ORGANIZER_ROLE_ID || '1163059730042851418'
     },
     supabase: {
         url: process.env.SUPABASE_URL,
@@ -173,7 +174,7 @@ module.exports = {
     },
     openrouter: {
         apiKey: process.env.OPENROUTER_API_KEY,
-        model: 'google/gemini-2.0-flash-lite-001'
+        model: 'google/gemini-2.5-flash'
     },
     points: {
         organiserIdBot: 77,
