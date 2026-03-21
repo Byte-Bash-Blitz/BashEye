@@ -27,21 +27,36 @@ class StreakService {
                 return { currentStreak: 1, isNewRecord: false };
             }
 
-            const oldStreak = memberStats.discord_streak || 0;
-            const daysDiff = this._istDaysDiff(memberStats.last_updated_at, todayIST);
-
+            // Fetch previous stats to know old streak
+            const oldStreak = memberStats ? (memberStats.discord_streak || 0) : 0;
+            
+            // Fetch recent points (last 30 days, ordered newest first)
+            const recentPoints = await database.getStreakData(memberId);
+            
             let newStreak;
-            if (daysDiff <= 1) {
-                // daysDiff=0: last_updated_at is same IST day (old system artifact) — still count as new day
-                // daysDiff=1: submitted yesterday — extend streak
-                // The messageHandler's alreadyAwarded guard ensures we're never called twice in one day,
-                // so daysDiff=0 here always means a stale timestamp from a previous system run, not a duplicate.
-                newStreak = oldStreak + 1;
-                console.log(`✅ Member ${memberId}: Streak ${oldStreak} → ${newStreak} (daysDiff=${daysDiff})`);
-            } else {
-                // Missed one or more days — reset
+            if (!recentPoints || recentPoints.length <= 1) {
+                // First post ever, or first post in 30 days
                 newStreak = 1;
-                console.log(`❌ Member ${memberId}: Missed ${daysDiff - 1} day(s). Streak reset to 1 (was ${oldStreak})`);
+                console.log(`📝 Member ${memberId}: First valid post in 30 days. Streak = 1`);
+            } else {
+                // recentPoints[0] is TODAY'S post (just inserted by awardPoints)
+                // recentPoints[1] is the PREVIOUS post
+                const previousPostDate = recentPoints[1].updated_at;
+                const daysDiff = this._istDaysDiff(previousPostDate, todayIST);
+                
+                if (daysDiff === 1) {
+                    // Submitted yesterday — extend streak
+                    newStreak = oldStreak + 1;
+                    console.log(`✅ Member ${memberId}: Streak ${oldStreak} → ${newStreak} (daysDiff=${daysDiff})`);
+                } else if (daysDiff === 0) {
+                    // Already submitted today (should be blocked by messageHandler, but just in case)
+                    newStreak = oldStreak;
+                    console.log(`📅 Member ${memberId}: Duplicate post today. Streak stays at ${newStreak}`);
+                } else {
+                    // Missed one or more days — reset
+                    newStreak = 1;
+                    console.log(`❌ Member ${memberId}: Missed ${daysDiff - 1} day(s). Streak reset to 1 (was ${oldStreak})`);
+                }
             }
 
             await database.updateDiscordStreak(memberId, newStreak);
