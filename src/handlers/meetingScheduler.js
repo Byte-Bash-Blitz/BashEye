@@ -33,6 +33,10 @@ class MeetingScheduler {
         this.schedulerMessageId = null;
         this.scheduledMeetings = new Map();
         this.activeMeetings = new Map();
+        this.generalVoiceSession = null;
+        this.generalVoiceChannelId = '1163002452187033671';
+        this.generalSessionMinSeconds = 10 * 60;
+        this.isFinalizingGeneralSession = false;
         this.messageDeletionTimers = new Map();
         this.client = null;
         this.cronJob = null;
@@ -63,6 +67,8 @@ class MeetingScheduler {
         const now = Date.now();
 
         console.log(`🎤 Voice update: ${displayName} | Old: ${oldState.channelId} | New: ${newState.channelId} | Active meetings: ${this.activeMeetings.size}`);
+
+        await this.handleGeneralVoiceSession(oldState, newState, userId, username, displayName, now);
 
         for (const [meetingId, meeting] of this.activeMeetings.entries()) {
             console.log(`   Checking meeting: ${meeting.topic} in channel ${meeting.channelId}`);
@@ -107,6 +113,159 @@ class MeetingScheduler {
                 }
             }
         }
+    }
+
+    async handleGeneralVoiceSession(oldState, newState, userId, username, displayName, now) {
+        const oldInGeneral = oldState.channelId === this.generalVoiceChannelId;
+        const newInGeneral = newState.channelId === this.generalVoiceChannelId;
+
+        if (!oldInGeneral && !newInGeneral) return;
+
+        const guild = newState.guild || oldState.guild;
+        if (!guild) return;
+
+        if (!this.generalVoiceSession && newInGeneral) {
+            const generalChannel = await this.client.channels.fetch(this.generalVoiceChannelId).catch(() => null);
+
+            this.generalVoiceSession = {
+                id: `general_${now}`,
+                topic: 'General Voice Session',
+                channelId: this.generalVoiceChannelId,
+                channelName: generalChannel?.name || 'General Voice',
+                actualStartTime: now,
+                participants: new Map()
+            };
+
+            console.log(`🎬 Started general voice session in ${this.generalVoiceSession.channelName}`);
+        }
+
+        const session = this.generalVoiceSession;
+        if (!session) return;
+
+        if (newInGeneral && !oldInGeneral) {
+            if (!session.participants.has(userId)) {
+                session.participants.set(userId, {
+                    displayName: displayName,
+                    username: username,
+                    joinedAt: now,
+                    leftAt: null,
+                    totalSeconds: 0,
+                    sessions: []
+                });
+                console.log(`➕ ${displayName} joined ${session.topic} (NEW participant)`);
+            } else {
+                const participant = session.participants.get(userId);
+                participant.displayName = displayName;
+                participant.username = username;
+                participant.joinedAt = now;
+                participant.leftAt = null;
+                console.log(`➕ ${displayName} rejoined ${session.topic}`);
+            }
+        }
+
+        if (oldInGeneral && !newInGeneral) {
+            const participant = session.participants.get(userId);
+            if (participant && !participant.leftAt) {
+                const sessionDuration = Math.floor((now - participant.joinedAt) / 1000);
+                participant.totalSeconds += sessionDuration;
+                participant.leftAt = now;
+                participant.sessions.push({
+                    joinedAt: participant.joinedAt,
+                    leftAt: now,
+                    duration: sessionDuration
+                });
+                console.log(`➖ ${displayName} left ${session.topic} (${Math.floor(sessionDuration / 60)}m ${sessionDuration % 60}s)`);
+            }
+        }
+
+        const generalChannel = await guild.channels.fetch(this.generalVoiceChannelId).catch(() => null);
+        const currentMembers = generalChannel ? generalChannel.members.filter(m => !m.user.bot).size : 0;
+
+        if (this.generalVoiceSession && currentMembers === 0) {
+            await this.finalizeGeneralVoiceSession(now);
+        }
+    }
+
+    async finalizeGeneralVoiceSession(actualEndTime) {
+        if (!this.generalVoiceSession || this.isFinalizingGeneralSession) return;
+
+        this.isFinalizingGeneralSession = true;
+
+        try {
+            const session = this.generalVoiceSession;
+
+            session.participants.forEach((participant) => {
+                if (!participant.leftAt) {
+                    const sessionDuration = Math.floor((actualEndTime - participant.joinedAt) / 1000);
+                    participant.totalSeconds += sessionDuration;
+                    participant.leftAt = actualEndTime;
+                    participant.sessions.push({
+                        joinedAt: participant.joinedAt,
+                        leftAt: actualEndTime,
+                        duration: sessionDuration
+                    });
+                }
+            });
+
+            const hasQualifyingParticipant = [...session.participants.values()]
+                .some(participant => participant.totalSeconds >= this.generalSessionMinSeconds);
+
+            if (hasQualifyingParticipant) {
+                await this.generateGeneralVoiceSummary(session, actualEndTime);
+            } else {
+                console.log('ℹ️ General voice session ended with no participant above 10 minutes; summary skipped');
+            }
+
+            console.log(`✅ General voice session completed: ${session.channelName}`);
+            this.generalVoiceSession = null;
+        } finally {
+            this.isFinalizingGeneralSession = false;
+        }
+    }
+
+    async generateGeneralVoiceSummary(session, actualEndTime) {
+        const statsChannelId = config.meetings.statsChannelId;
+        if (!statsChannelId) return;
+
+        const statsChannel = await this.client.channels.fetch(statsChannelId).catch(() => null);
+        if (!statsChannel) return;
+
+        const totalDuration = Math.max(actualEndTime - session.actualStartTime, 1000);
+        const totalDurationSeconds = Math.floor(totalDuration / 1000);
+        const totalMinutes = Math.floor(totalDuration / (1000 * 60));
+
+        const finalAttendance = [];
+        session.participants.forEach((participant) => {
+            if (participant.totalSeconds > 0) {
+                finalAttendance.push({
+                    displayName: participant.displayName || participant.username,
+                    seconds: participant.totalSeconds
+                });
+            }
+        });
+
+        finalAttendance.sort((a, b) => b.seconds - a.seconds);
+
+        let summary = '📊 **Final Meeting Report**\n\n📝 **General Voice Session**\n';
+        summary += `🎙️ Channel: ${session.channelName}\n⏱️ Total: ${Math.floor(totalMinutes / 60)}h ${totalMinutes % 60}m\n`;
+        summary += '\n👥 **Complete Attendance:**\n\n';
+
+        if (finalAttendance.length === 0) {
+            summary += '_No participants_\n';
+        } else {
+            finalAttendance.forEach(p => {
+                const mins = Math.floor(p.seconds / 60);
+                const percentage = Math.round((p.seconds / totalDurationSeconds) * 100);
+                const badge = percentage >= 95 ? ' ⭐' : '';
+                summary += `• **${p.displayName}** - ${mins}m (${percentage}%)${badge}\n`;
+            });
+
+            const fullAttendance = finalAttendance.filter(p => p.seconds >= (totalDurationSeconds * 0.95)).length;
+            summary += `\n📈 Total: ${finalAttendance.length} | Full (95%+): ${fullAttendance}\n`;
+        }
+
+        summary += '\nℹ️ Auto-posted because at least one participant stayed for 10+ minutes.';
+        await statsChannel.send(summary);
     }
 
     startCronJob() {
