@@ -4,6 +4,8 @@ const database = require('../database/supabase');
 const streakService = require('../services/streakService');
 const config = require('../config/config');
 const aiService = require('../services/aiService');
+const timeHelper = require('../utils/timeHelper');
+
 
 class MessageHandler {
     constructor() {
@@ -61,6 +63,14 @@ class MessageHandler {
             const dateString = config.getTodayDateString();
             const description = `PU-${dateString}`;
             
+            // NEW: Time constraint check (11am IST)
+            const istHour = timeHelper.getIstHour();
+            if (istHour < 11) {
+                console.log(`⏱️ Ignoring submission from ${message.author.username} - outside allowed hours (Current IST hour: ${istHour})`);
+                await this.sendFeedback(message, "You can do more today. Keep grinding and share your full day's progress by the end of the day.");
+                return;
+            }
+
             const alreadyAwarded = await database.checkDailyPointsAwarded(memberId, description);
              if (alreadyAwarded) {
              console.log(`ℹ️ ${message.author.username} already received points today - ignoring message (no validation needed)`);
