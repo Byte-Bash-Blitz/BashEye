@@ -97,6 +97,44 @@ class SlashCommandHandler {
                 ),
             execute: (interaction) => this.executeRestoreStreakCommand(interaction)
         });
+
+        // List streaks command (organizer only)
+        this.commands.set('list-streaks', {
+            data: new SlashCommandBuilder()
+                .setName('list-streaks')
+                .setDescription('🔧 [Organizer] List all members with >1 streak'),
+            execute: (interaction) => this.executeListStreaksCommand(interaction)
+        });
+    }
+
+    async executeListStreaksCommand(interaction) {
+        // ── 1. Organizer role check ──────────────────────────────────────────
+        const hasRole = interaction.member.roles.cache.has(config.discord.organizerRoleId);
+        if (!hasRole) {
+            return await interaction.reply({ content: '🚫 Access Denied.', ephemeral: true });
+        }
+
+        await interaction.deferReply({ ephemeral: true });
+
+        try {
+            const client = await database.getClient();
+            const { data, error } = await client
+                .from('member_stats')
+                .select('discord_streak, members(discord_username)')
+                .gt('discord_streak', 1);
+
+            if (error) throw error;
+
+            let message = "🔥 **Members with >1 Streak:**\n\n";
+            data.forEach(item => {
+                message += `• **${item.members.discord_username}**: ${item.discord_streak} days\n`;
+            });
+
+            await interaction.editReply({ content: message });
+        } catch (error) {
+            console.error('Error in list-streaks:', error);
+            await interaction.editReply({ content: '❌ Error fetching streaks.' });
+        }
     }
 
     getStreakStatusMessage(streak) {
