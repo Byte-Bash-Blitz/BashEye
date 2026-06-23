@@ -37,9 +37,6 @@ class APIServer {
 
     }
 
-        }, 300000); 
-    }
-
     setupRoutes() {
         // Health check
         this.app.get('/', (req, res) => {

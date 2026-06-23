@@ -8,18 +8,23 @@
 function getIstHour() {
     const now = new Date();
     
-    // Convert to IST string
-    const istString = now.toLocaleString('en-US', { 
-        timeZone: 'Asia/Kolkata', 
-        hour12: false 
-    });
+    // Get current time in UTC
+    const utcHours = now.getUTCHours();
+    const utcMinutes = now.getUTCMinutes();
     
-    // Extract the hour from the string format "MM/DD/YYYY, HH:MM:SS"
-    // The time part is after the comma and space
-    const timePart = istString.split(', ')[1];
-    const hour = parseInt(timePart.split(':')[0], 10);
+    // Convert to IST (UTC + 5 hours 30 minutes)
+    let istHours = utcHours + 5;
+    let istMinutes = utcMinutes + 30;
     
-    return hour;
+    if (istMinutes >= 60) {
+        istHours += 1;
+        istMinutes -= 60;
+    }
+    
+    // Handle day wrap-around if any (though not strictly necessary for just the hour)
+    istHours = istHours % 24;
+    
+    return istHours;
 }
 
 module.exports = {
