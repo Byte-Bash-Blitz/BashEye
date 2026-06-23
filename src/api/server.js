@@ -25,15 +25,14 @@ class APIServer {
         // Self-ping to prevent Render sleep (runs every 5 minutes)
         setInterval(async () => {
             try {
-                // Using the specific URL for your bot
                 const url = `https://basheye-j0jl.onrender.com/health`;
-                
                 const response = await fetch(url);
                 console.log(`[Self-Ping] Ping sent to ${url}, status: ${response.status}`);
             } catch (err) {
                 console.error(`[Self-Ping] Error: ${err.message}`);
             }
-        }, 300000); 
+        }, 300000);
+
 
     }
 
@@ -201,12 +200,8 @@ class APIServer {
         });
 
         // Self-ping to prevent Render sleep (runs every 5 minutes)
-        setInterval(() => {
-            const url = `http://localhost:${config.server.port}/health`;
-            fetch(url)
-                .then(res => console.log(`[Self-Ping] Success: ${res.status}`))
-                .catch(err => console.error(`[Self-Ping] Error: ${err.message}`));
-        }, 300000); 
+        // Error handling middleware
+        this.app.use((error, req, res, next) => {
             console.error('API Error:', error);
             res.status(500).json({
                 error: 'Internal server error',
