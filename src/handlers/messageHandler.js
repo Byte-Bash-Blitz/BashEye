@@ -52,9 +52,14 @@ class MessageHandler {
 
             // console.log(`✅ Processing message from ${message.author.username} in ${message.channel.name}`);
 
+            console.log(
+                `🔎 Discord identity for lookup: username="${message.author.username}", globalName="${message.author.globalName || ''}", displayName="${message.member?.displayName || ''}", userId="${message.author.id}"`
+            );
+
             // Get member ID from database first
             const memberId = await database.getMemberByDiscordUsername(message.author.username);
             if (!memberId) {
+                console.warn(`⚠️ No Supabase member row found for Discord username "${message.author.username}" (userId=${message.author.id})`);
                 await this.sendFeedback(message, 'Your Discord username is not registered in our system. Please contact an admin! �');
                 return;
             }

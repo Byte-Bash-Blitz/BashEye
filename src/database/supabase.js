@@ -34,19 +34,62 @@ class SupabaseService {
     // Member operations
     async getMemberByDiscordUsername(discordUsername) {
         try {
-            const client = await this.getClient();
-            const { data, error } = await client
-                .from('members')
-                .select('id')
-                .eq('discord_username', discordUsername)
-                .single();
-
-            if (error) {
-                console.error('Error fetching member:', error);
+            const normalizedUsername = typeof discordUsername === 'string' ? discordUsername.trim() : '';
+            if (!normalizedUsername) {
                 return null;
             }
 
-            return data?.id || null;
+            console.log(`Looking up member by Discord username "${normalizedUsername}"`);
+
+            const client = await this.getClient();
+
+            const fetchMember = async (filterBuilder) => {
+                const { data, error } = await filterBuilder;
+
+                if (error) {
+                    console.error('Error fetching member:', error);
+                    return null;
+                }
+
+                if (!data || data.length === 0) {
+                    return null;
+                }
+
+                if (data.length > 1) {
+                    console.warn(`⚠️ Multiple members matched Discord username "${normalizedUsername}". Using the first match.`);
+                }
+
+                return data[0]?.id || null;
+            };
+
+            const exactMatch = await fetchMember(
+                client
+                    .from('members')
+                    .select('id')
+                    .eq('discord_username', normalizedUsername)
+                    .limit(2)
+            );
+
+            if (exactMatch) {
+                console.log(`✅ Exact Discord username match found for "${normalizedUsername}"`);
+                return exactMatch;
+            }
+
+            const caseInsensitiveMatch = await fetchMember(
+                client
+                    .from('members')
+                    .select('id')
+                    .ilike('discord_username', normalizedUsername)
+                    .limit(2)
+            );
+
+            if (caseInsensitiveMatch) {
+                console.warn(`⚠️ Matched Discord username "${normalizedUsername}" using case-insensitive lookup.`);
+                return caseInsensitiveMatch;
+            }
+
+            console.warn(`⚠️ No Supabase member row matched Discord username "${normalizedUsername}"`);
+            return null;
         } catch (error) {
             console.error('Error in getMemberByDiscordUsername:', error);
             return null;
