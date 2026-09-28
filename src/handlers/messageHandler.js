@@ -5,15 +5,28 @@ const streakService = require('../services/streakService');
 const config = require('../config/config');
 const aiService = require('../services/aiService');
 const timeHelper = require('../utils/timeHelper');
+const clanProgressService = require('../services/clanProgressService');
+const clanConfig = require('../config/clanConfig');
 
 
 class MessageHandler {
     constructor() {
-        // Note: No RAM-based cooldowns - using database-based duplicate prevention instead
+        // Concurrency lock to prevent rapid duplicate event processing for the same user
+        this.processingMembers = new Set();
     }
 
     async handleMessage(message) {
+        // Prevent race conditions from concurrent message delivery for the same user
+        if (message.author && this.processingMembers.has(message.author.id)) {
+            console.log(`⏳ Submission already in-flight for ${message.author.username} (${message.author.id}) — skipping concurrent event.`);
+            return;
+        }
+
         try {
+            if (message.author) {
+                this.processingMembers.add(message.author.id);
+            }
+
             // Skip bot messages
             if (message.author.bot) return;
 
@@ -29,28 +42,32 @@ class MessageHandler {
             }
             // console.log(`🎯 Expected Category ID: ${config.discord.basherProgressCategoryId}`);
 
-            // Check if message is in the basher-progress category
-            if (!this.isInBasherProgressCategory(message)) return;
+            // ── MULTI-CLAN PROGRESS SYSTEM ──
+            const targetChannelId = clanProgressService.resolveProgressChannelId(message.channel);
+            const isMonitoredClanChannel = clanConfig.isClanProgressChannel(targetChannelId);
+
+            let detectedClan = null;
+            if (isMonitoredClanChannel) {
+                const clanValidation = await clanProgressService.validateClanSubmission(message);
+                if (!clanValidation.valid) {
+                    // Section 6: Messages failing clan validation are ignored without public response
+                    return;
+                }
+                detectedClan = clanValidation.clan;
+            } else {
+                // If message is sent outside configured clan progress channels, check legacy category
+                if (!this.isInBasherProgressCategory(message)) {
+                    return; // Ignore completely for clan progress system
+                }
+            }
 
             // Check if this is a thread and if the message author is the thread owner
             if (message.channel.type === ChannelType.PublicThread || message.channel.type === ChannelType.PrivateThread) {
                 const threadOwner = message.channel.ownerId;
-                // console.log(`🧵 Thread: ${message.channel.name}`);
-                // console.log(`👤 Thread Owner ID: ${threadOwner}`);
-                // console.log(`✍️ Message Author ID: ${message.author.id}`);
-                
                 if (message.author.id !== threadOwner) {
-                    // console.log(`❌ Message from ${message.author.username} ignored - not the thread owner`);
                     return;
                 }
-                
-                // console.log(`✅ Message from thread owner ${message.author.username} - processing for points`);
             }
-
-            // Database-based duplicate prevention (deployment-safe, no RAM dependency)
-            // The duplicate check happens via database query below
-
-            // console.log(`✅ Processing message from ${message.author.username} in ${message.channel.name}`);
 
             console.log(
                 `🔎 Discord identity for lookup: username="${message.author.username}", globalName="${message.author.globalName || ''}", displayName="${message.member?.displayName || ''}", userId="${message.author.id}"`
@@ -60,13 +77,14 @@ class MessageHandler {
             const memberId = await database.getMemberByDiscordUsername(message.author.username);
             if (!memberId) {
                 console.warn(`⚠️ No Supabase member row found for Discord username "${message.author.username}" (userId=${message.author.id})`);
-                await this.sendFeedback(message, 'Your Discord username is not registered in our system. Please contact an admin! �');
+                await this.sendFeedback(message, 'Your Discord username is not registered in our system. Please contact an admin! ⚠️');
                 return;
             }
 
             // Check if points already awarded today - silently ignore if already awarded (skip all validation)
             const dateString = config.getTodayDateString();
-            const description = `PU-${dateString}`;
+            const todayIST = config.getISTDateString();
+            const description = detectedClan ? `PU-${detectedClan.id}-${dateString}` : `PU-${dateString}`;
             
             // NEW: Time constraint check (11am IST)
             const istHour = timeHelper.getIstHour();
@@ -76,11 +94,28 @@ class MessageHandler {
                 return;
             }
 
-            const alreadyAwarded = await database.checkDailyPointsAwarded(memberId, description);
-             if (alreadyAwarded) {
-             console.log(`ℹ️ ${message.author.username} already received points today - ignoring message (no validation needed)`);
-                 return; // Silently ignore without any validation or feedback
-         }
+            // Duplicate check: check points table and clan progress store
+            const alreadyAwardedPoints = await database.checkDailyPointsAwarded(memberId, description) ||
+                                         await database.checkDailyPointsAwarded(memberId, `PU-${dateString}`);
+            const alreadyAwardedClan = detectedClan
+                ? await clanProgressService.hasSubmittedToday(detectedClan.id, message.author.id, todayIST)
+                : false;
+
+            if (alreadyAwardedPoints || alreadyAwardedClan) {
+                console.log(`ℹ️ ${message.author.username} already received points/submitted today - ignoring message (no validation needed)`);
+                if (detectedClan && !alreadyAwardedClan) {
+                    await clanProgressService.recordSubmission({
+                        userId: message.author.id,
+                        username: message.author.username,
+                        memberId: memberId,
+                        clanId: detectedClan.id,
+                        clanName: detectedClan.name,
+                        channelId: detectedClan.progressChannelId,
+                        submissionDate: todayIST
+                    });
+                }
+                return; // Silently ignore without any validation or feedback
+            }
 
             // Check for recent submissions (deployment-safe spam prevention)
             const hasRecentSubmission = await database.checkRecentSubmission(memberId, 2);
@@ -113,12 +148,31 @@ class MessageHandler {
             // 3. Award points
             const success = await database.awardPoints(memberId, config.points.dailyAmount, description);
             if (!success) {
-                await this.sendFeedback(message, 'There was an error awarding your points. Please contact an admin! ⚠️');
-                return;
+                // Final safety check: see if points actually exist in database (e.g. response timeout after commit)
+                const verified = await database.checkDailyPointsAwarded(memberId, description);
+                if (!verified) {
+                    await this.sendFeedback(message, 'There was an error awarding your points. Please contact an admin! ⚠️');
+                    return;
+                }
             }
 
             // 4. Update streak
             const streakInfo = await streakService.handleDailySubmission(memberId);
+
+            // 5. Record clan progress independently
+            if (detectedClan) {
+                await clanProgressService.recordSubmission({
+                    userId: message.author.id,
+                    username: message.author.username,
+                    memberId: memberId,
+                    clanId: detectedClan.id,
+                    clanName: detectedClan.name,
+                    channelId: detectedClan.progressChannelId,
+                    submissionDate: todayIST,
+                    pointsAwarded: config.points.dailyAmount,
+                    streak: streakInfo.currentStreak || 1
+                });
+            }
 
             // 5. --- NEW ENHANCED FEEDBACK ---
             let enhancedFeedback = null;
@@ -148,7 +202,6 @@ class MessageHandler {
             }
 
             // Send success feedback with streak information
-            // Send success feedback with streak information
             await this.sendSuccessFeedback(message, streakInfo, enhancedFeedback);
 
             console.log(`Successfully awarded ${config.points.dailyAmount} points to ${message.author.username} (Member ID: ${memberId}). Streak: ${streakInfo.currentStreak} days`);
@@ -156,6 +209,10 @@ class MessageHandler {
         } catch (error) {
             console.error('Error handling message:', error);
             await this.sendFeedback(message, 'An unexpected error occurred. Please try again later! 🔧');
+        } finally {
+            if (message.author) {
+                this.processingMembers.delete(message.author.id);
+            }
         }
     }
 

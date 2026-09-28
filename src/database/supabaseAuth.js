@@ -8,10 +8,16 @@ class SupabaseAuthService {
         this.session = null;
         this.refreshTimer = null;
         this.isAuthenticated = false;
+        this.authPromise = null;
         this.initializeClient();
     }
 
     initializeClient() {
+        if (!config.supabase.url || !config.supabase.key) {
+            console.warn('⚠️ Supabase URL or key not configured in supabaseAuth');
+            return;
+        }
+
         // Initialize Supabase client with anon key (for authentication)
         this.client = createClient(config.supabase.url, config.supabase.key, {
             auth: {
@@ -24,48 +30,78 @@ class SupabaseAuthService {
         // Set up auth state change listener
         this.client.auth.onAuthStateChange((event, session) => {
             console.log('🔐 Auth state changed:', event);
-            this.session = session;
-            this.isAuthenticated = !!session;
+            if (session) {
+                this.session = session;
+                this.isAuthenticated = true;
+            } else if (event === 'SIGNED_OUT') {
+                this.session = null;
+                this.isAuthenticated = false;
+            }
 
             if (event === 'SIGNED_IN' && session) {
                 console.log('✅ Bot user authenticated successfully');
                 this.scheduleTokenRefresh(session);
-            } else if (event === 'SIGNED_OUT' || event === 'TOKEN_REFRESHED') {
-                if (event === 'TOKEN_REFRESHED' && session) {
-                    console.log('🔄 Token refreshed successfully');
-                    this.scheduleTokenRefresh(session);
-                }
+            } else if (event === 'TOKEN_REFRESHED' && session) {
+                console.log('🔄 Token refreshed successfully');
+                this.scheduleTokenRefresh(session);
             }
         });
     }
 
     async authenticate() {
-        try {
-            console.log('🔐 Authenticating bot user...');
-            
-            const { data, error } = await this.client.auth.signInWithPassword({
-                email: process.env.email,
-                password: process.env.mailpass
-            });
-
-            if (error) {
-                console.error('❌ Authentication failed:', error.message);
-                throw new Error(`Authentication failed: ${error.message}`);
-            }
-
-            console.log('✅ Bot user authenticated:', data.user.email);
-            return true;
-        } catch (error) {
-            console.error('❌ Authentication error:', error);
-            this.isAuthenticated = false;
-            return false;
+        if (this.authPromise) {
+            return await this.authPromise;
         }
+
+        this.authPromise = (async () => {
+            try {
+                if (!this.client) {
+                    this.isAuthenticated = false;
+                    return false;
+                }
+
+                console.log('🔐 Authenticating bot user...');
+                
+                const { data, error } = await this.client.auth.signInWithPassword({
+                    email: process.env.email,
+                    password: process.env.mailpass
+                });
+
+                if (error) {
+                    console.error('❌ Authentication failed:', error.message);
+                    this.isAuthenticated = false;
+                    return false;
+                }
+
+                if (data && data.session) {
+                    this.session = data.session;
+                    this.isAuthenticated = true;
+                    this.scheduleTokenRefresh(data.session);
+                }
+
+                console.log('✅ Bot user authenticated:', data.user?.email || 'success');
+                return true;
+            } catch (error) {
+                console.error('❌ Authentication error:', error);
+                this.isAuthenticated = false;
+                return false;
+            } finally {
+                this.authPromise = null;
+            }
+        })();
+
+        return await this.authPromise;
     }
 
     scheduleTokenRefresh(session) {
         // Clear existing timer
         if (this.refreshTimer) {
             clearTimeout(this.refreshTimer);
+            this.refreshTimer = null;
+        }
+
+        if (!session || !session.expires_at) {
+            return;
         }
 
         // Calculate time until token expires (refresh 5 minutes before expiry)
@@ -78,6 +114,9 @@ class SupabaseAuthService {
             this.refreshTimer = setTimeout(() => {
                 this.refreshSession();
             }, refreshTime);
+            if (this.refreshTimer && typeof this.refreshTimer.unref === 'function') {
+                this.refreshTimer.unref();
+            }
         }
     }
 
@@ -86,37 +125,38 @@ class SupabaseAuthService {
             console.log('🔄 Refreshing session...');
             const { data, error } = await this.client.auth.refreshSession();
             
-            if (error) {
-                console.error('❌ Token refresh failed:', error.message);
-                // Attempt re-authentication
-                await this.authenticate();
+            if (error || !data?.session) {
+                console.warn('⚠️ Token refresh failed, re-authenticating bot user:', error?.message);
+                return await this.authenticate();
             }
+
+            this.session = data.session;
+            this.isAuthenticated = true;
+            this.scheduleTokenRefresh(data.session);
+            console.log('🔄 Token refreshed successfully');
+            return true;
         } catch (error) {
-            console.error('❌ Session refresh error:', error);
-            // Attempt re-authentication
-            await this.authenticate();
+            console.error('❌ Session refresh error:', error.message);
+            return await this.authenticate();
         }
     }
 
     async ensureAuthenticated() {
-        if (!this.isAuthenticated || !this.session) {
-            console.log('🔄 Re-authenticating bot user...');
+        if (this.authPromise) {
+            await this.authPromise;
+        }
+
+        const now = Date.now();
+        const expiresAt = this.session?.expires_at ? this.session.expires_at * 1000 : 0;
+        const timeUntilExpiry = expiresAt - now;
+
+        // Re-authenticate if unauthenticated, missing session, expired, or expiring within 2 minutes
+        if (!this.isAuthenticated || !this.session || timeUntilExpiry <= (2 * 60 * 1000)) {
+            console.log(`🔄 Session invalid or expiring in ${Math.round(timeUntilExpiry / 1000)}s, authenticating...`);
             return await this.authenticate();
         }
-        
-        // Check if token is about to expire (within 10 minutes)
-        if (this.session && this.session.expires_at) {
-            const expiresAt = this.session.expires_at * 1000;
-            const now = Date.now();
-            const timeUntilExpiry = expiresAt - now;
-            
-            if (timeUntilExpiry < (10 * 60 * 1000)) { // Less than 10 minutes
-                console.log('⏰ Token expiring soon, refreshing...');
-                await this.refreshSession();
-            }
-        }
-        
-        return this.isAuthenticated;
+
+        return true;
     }
 
     getAuthenticatedClient() {

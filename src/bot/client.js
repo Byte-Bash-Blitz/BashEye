@@ -9,6 +9,7 @@ class DiscordClient {
         this.client = new Client({
             intents: [
                 GatewayIntentBits.Guilds,
+                GatewayIntentBits.GuildMembers,     // Required for clan member role detection and DM reminders
                 GatewayIntentBits.GuildMessages,
                 GatewayIntentBits.MessageContent,
                 GatewayIntentBits.GuildMessageReactions,
@@ -29,14 +30,15 @@ class DiscordClient {
             // Set bot activity
             this.client.user.setActivity('for progress posts! 📈', { type: ActivityType.Watching });
             
-            // Auto-deploy slash commands on startup
-            console.log('🔧 Deploying slash commands...');
-            try {
+            // Deploy slash commands in the background without blocking the ready event or REST queue
+            if (process.env.AUTO_DEPLOY_COMMANDS === 'true') {
+                console.log('🔧 Auto-deploying slash commands in background...');
                 const { deployCommands } = require('../commands/deploy');
-                await deployCommands();
-                console.log('✅ Slash commands deployed successfully');
-            } catch (error) {
-                console.error('❌ Failed to deploy slash commands:', error);
+                deployCommands().then(() => {
+                    console.log('✅ Slash commands deployed successfully');
+                }).catch((error) => {
+                    console.error('❌ Failed to deploy slash commands:', error);
+                });
             }
 
             // Initialize and post scheduler message
@@ -47,6 +49,15 @@ class DiscordClient {
                 await meetingScheduler.postSchedulerMessage(this.client);
             } catch (error) {
                 console.error('❌ Failed to initialize scheduler:', error);
+            }
+
+            // Initialize clan DM reminder scheduler
+            console.log('⏰ Initializing Clan DM reminder scheduler...');
+            try {
+                const clanReminderService = require('../services/clanReminderService');
+                clanReminderService.initialize(this.client);
+            } catch (error) {
+                console.error('❌ Failed to initialize Clan DM reminder scheduler:', error);
             }
         });
 
@@ -105,6 +116,12 @@ class DiscordClient {
     async stop() {
         try {
             console.log('🛑 Stopping Discord bot...');
+            try {
+                const clanReminderService = require('../services/clanReminderService');
+                clanReminderService.stop();
+            } catch (err) {
+                // Ignore if not initialized
+            }
             if (this.client) {
                 await this.client.destroy();
                 console.log('✅ Discord bot stopped');

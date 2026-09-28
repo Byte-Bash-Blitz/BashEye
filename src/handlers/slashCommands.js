@@ -1,8 +1,11 @@
 // src/handlers/slashCommands.js
-const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
+const { SlashCommandBuilder, EmbedBuilder, MessageFlags } = require('discord.js');
 const database = require('../database/supabase');
 const streakService = require('../services/streakService');
 const config = require('../config/config');
+const clanConfig = require('../config/clanConfig');
+const clanProgressService = require('../services/clanProgressService');
+const clanReminderService = require('../services/clanReminderService');
 
 class SlashCommandHandler {
     constructor() {
@@ -105,6 +108,35 @@ class SlashCommandHandler {
                 .setDescription('🔧 [Organizer] List all members with >1 streak'),
             execute: (interaction) => this.executeListStreaksCommand(interaction)
         });
+
+        // Force push / reminder test command - ONLY user and clan options as requested
+        const forcePushOptions = (builder) => builder
+            .addUserOption(option =>
+                option.setName('user')
+                    .setDescription('Member to check progress for (defaults to you)')
+                    .setRequired(false)
+            )
+            .addStringOption(option =>
+                option.setName('clan')
+                    .setDescription('Clan name or ALL CLANS (optional, defaults to member\'s clan)')
+                    .setRequired(false)
+                    .addChoices(
+                        { name: '🌟 ALL CLANS', value: 'all' },
+                        { name: 'AURA 7F', value: 'aura7f' },
+                        { name: 'BELMONT', value: 'belmont' },
+                        { name: 'LUMINA', value: 'lumina' },
+                        { name: 'SHADASTRIA', value: 'shadastria' }
+                    )
+            );
+
+        this.commands.set('forcepush', {
+            data: forcePushOptions(
+                new SlashCommandBuilder()
+                    .setName('forcepush')
+                    .setDescription('🔔 Check daily progress and send DM reminder if not submitted')
+            ),
+            execute: (interaction) => this.executeForcePushCommand(interaction)
+        });
     }
 
     async executeListStreaksCommand(interaction) {
@@ -158,6 +190,13 @@ class SlashCommandHandler {
 
     // Command execution methods with proper context
     async executeStreakCommand(interaction) {
+        try {
+            await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+        } catch (deferErr) {
+            if (deferErr.code === 10062) return;
+            throw deferErr;
+        }
+
         const targetUser = interaction.options.getUser('user') || interaction.user;
         const username = targetUser.username;
 
@@ -165,9 +204,8 @@ class SlashCommandHandler {
             // Get member ID from database
             const memberId = await database.getMemberByDiscordUsername(username);
             if (!memberId) {
-                await interaction.reply({ 
-                    content: `❌ **Member Not Found**\n\n${username} is not registered in our system yet.\n\n*Please contact an administrator to register.*`,
-                    ephemeral: true 
+                await interaction.editReply({ 
+                    content: `❌ **Member Not Found**\n\n${username} is not registered in our system yet.\n\n*Please contact an administrator to register.*`
                 });
                 return;
             }
@@ -204,27 +242,32 @@ class SlashCommandHandler {
                 embed.setDescription(`Streak information for ${targetUser.toString()}`);
             }
 
-            await interaction.reply({ embeds: [embed], ephemeral: true });
+            await interaction.editReply({ embeds: [embed] });
 
         } catch (error) {
             console.error('Error in streak command:', error);
-            await interaction.reply({ 
-                content: '❌ **Error**\n\nThere was an error retrieving streak information. Please try again later.',
-                ephemeral: true 
+            await interaction.editReply({ 
+                content: '❌ **Error**\n\nThere was an error retrieving streak information. Please try again later.'
             });
         }
     }
 
     async executeMystatsCommand(interaction) {
+        try {
+            await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+        } catch (deferErr) {
+            if (deferErr.code === 10062) return;
+            throw deferErr;
+        }
+
         const username = interaction.user.username;
 
         try {
             // Get member ID from database
             const memberId = await database.getMemberByDiscordUsername(username);
             if (!memberId) {
-                await interaction.reply({ 
-                    content: `❌ **Member Not Found**\n\nYou are not registered in our system yet.\n\n*Please contact an administrator to register your Discord account.*`,
-                    ephemeral: true 
+                await interaction.editReply({ 
+                    content: `❌ **Member Not Found**\n\nYou are not registered in our system yet.\n\n*Please contact an administrator to register your Discord account.*`
                 });
                 return;
             }
@@ -283,13 +326,12 @@ class SlashCommandHandler {
                 .setFooter({ text: 'Keep up the amazing progress! 🌟' })
                 .setTimestamp();
 
-            await interaction.reply({ embeds: [embed], ephemeral: true });
+            await interaction.editReply({ embeds: [embed] });
 
         } catch (error) {
             console.error('Error in mystats command:', error);
-            await interaction.reply({ 
-                content: '❌ **Error**\n\nThere was an error retrieving your statistics. Please try again later.',
-                ephemeral: true 
+            await interaction.editReply({ 
+                content: '❌ **Error**\n\nThere was an error retrieving your statistics. Please try again later.'
             });
         }
     }
@@ -428,6 +470,384 @@ class SlashCommandHandler {
         await interaction.editReply({ content: null, embeds: [embed] });
     }
 
+    async executeForcePuchCommand(interaction) {
+        return this.executeForcePushCommand(interaction);
+    }
+
+    async executeForcePushCommand(interaction) {
+        try {
+            await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+        } catch (deferErr) {
+            if (deferErr.code === 10062) return;
+            throw deferErr;
+        }
+
+        try {
+            const action = (interaction.options && typeof interaction.options.getString === 'function' ? interaction.options.getString('action') : null);
+            const rawUserOption = (interaction.options && typeof interaction.options.getUser === 'function' ? interaction.options.getUser('user') : null);
+            const targetUser = rawUserOption || interaction.user;
+            const clanOption = (interaction.options && typeof interaction.options.getString === 'function' ? interaction.options.getString('clan') : null);
+            const customStreak = (interaction.options && typeof interaction.options.getInteger === 'function' ? interaction.options.getInteger('streak') : null);
+            const customPoints = (interaction.options && typeof interaction.options.getInteger === 'function' ? interaction.options.getInteger('points') : null);
+            const todayIST = config.getISTDateString();
+
+            const isAllClans = !!(clanOption && ['all', 'all_clans', 'all clan', 'all clans', 'allclans'].includes(clanOption.toLowerCase()));
+
+            // 1. Optional test support for clear action if explicitly requested via code/options
+            if (action === 'clear') {
+                if (clanOption && !isAllClans) {
+                    const singleClan = clanConfig.getClanById(clanOption) || clanConfig.CLANS.aura7f;
+                    await clanProgressService.clearTodaySubmission(singleClan.id, targetUser.id, todayIST);
+                } else {
+                    for (const clan of Object.values(clanConfig.CLANS)) {
+                        await clanProgressService.clearTodaySubmission(clan.id, targetUser.id, todayIST);
+                    }
+                }
+
+                const embed = new EmbedBuilder()
+                    .setColor('#FFA500')
+                    .setTitle('🧪 [Force Clear] Progress Reset for Testing')
+                    .setDescription(`Cleared progress record for ${targetUser.toString()} on **${todayIST}**.\nYou can now test daily progress checks or DM reminders.`)
+                    .addFields(
+                        { name: '👤 Target User', value: `${targetUser.username} (<@${targetUser.id}>)`, inline: true },
+                        { name: '🛡️ Clan Scope', value: (clanOption && !isAllClans) ? (clanConfig.getClanById(clanOption)?.name || clanOption) : 'All 4 Clans', inline: true },
+                        { name: '📅 Date', value: todayIST, inline: true }
+                    )
+                    .setTimestamp();
+
+                return await interaction.editReply({ embeds: [embed] });
+            }
+
+            // 2. ALL CLANS WORKFLOW: Scans all 4 clans (or checks target user across all 4 clans)
+            if (isAllClans && action !== 'punch') {
+                // Case A: All clans across all tracked members (no specific user)
+                if (!rawUserOption) {
+                    const summary = await clanReminderService.runReminders(interaction.client, {
+                        guild: interaction.guild,
+                        dryRun: false
+                    });
+
+                    if (summary.error) {
+                        return await interaction.editReply({
+                            content: `❌ Could not run all-clan check: ${summary.error}`
+                        });
+                    }
+
+                    let totalTracked = 0;
+                    let totalCompleted = 0;
+                    let totalMissing = 0;
+                    let totalSent = 0;
+                    let totalFailed = 0;
+
+                    const embed = new EmbedBuilder()
+                        .setColor('#5865F2')
+                        .setTitle('🌟 [All Clans] Daily Progress Check & DM Reminders')
+                        .setDescription(
+                            `Scanned all 4 clans for **${todayIST}**.\n` +
+                            `DM reminders have been dispatched to members who haven't submitted today's progress.`
+                        )
+                        .setTimestamp()
+                        .setFooter({ text: 'BashEye Multi-Clan Progress System' });
+
+                    for (const clan of Object.values(clanConfig.CLANS)) {
+                        const clanRes = summary[clan.id] || { totalMembers: 0, completedMembers: 0, missingMembers: 0, remindersSent: 0, remindersFailed: 0, details: [] };
+                        totalTracked += clanRes.totalMembers;
+                        totalCompleted += clanRes.completedMembers;
+                        totalMissing += clanRes.missingMembers;
+                        totalSent += clanRes.remindersSent;
+                        totalFailed += clanRes.remindersFailed;
+
+                        let clanStatusText = `👥 **Tracked:** ${clanRes.totalMembers}\n` +
+                            `✅ **Submitted:** ${clanRes.completedMembers}\n` +
+                            `⏳ **Missing:** ${clanRes.missingMembers}\n` +
+                            `📬 **DMs Sent:** ${clanRes.remindersSent}` + (clanRes.remindersFailed > 0 ? ` (${clanRes.remindersFailed} failed)` : '');
+
+                        if (clanRes.totalMembers === 0) {
+                            clanStatusText += `\n*No members tracked in role*`;
+                        } else if (clanRes.missingMembers === 0) {
+                            clanStatusText += `\n🎉 *All members completed!*`;
+                        } else if (clanRes.details && clanRes.details.length > 0) {
+                            const remindedTags = clanRes.details.map(d => `<@${d.userId}>`).slice(0, 5).join(', ');
+                            const overflow = clanRes.details.length > 5 ? ` +${clanRes.details.length - 5} more` : '';
+                            clanStatusText += `\n🔔 **Reminded:** ${remindedTags}${overflow}`;
+                        }
+
+                        embed.addFields({
+                            name: `🛡️ ${clan.name} (<#${clan.progressChannelId}>)`,
+                            value: clanStatusText,
+                            inline: true
+                        });
+                    }
+
+                    embed.addFields({
+                        name: '📊 Overall Progress Summary',
+                        value: `• **Total Members Tracked:** ${totalTracked}\n` +
+                               `• **Completed Today:** ${totalCompleted}\n` +
+                               `• **Pending / Missing:** ${totalMissing}\n` +
+                               `• **DM Reminders Sent:** ${totalSent}` + (totalFailed > 0 ? ` (${totalFailed} failed)` : ''),
+                        inline: false
+                    });
+
+                    return await interaction.editReply({ embeds: [embed] });
+                }
+
+                // Case B: All clans check for a specific target member (e.g. /forcepush clan:all user:@zenitzu)
+                let targetMember = null;
+                if (interaction.member && interaction.member.user && interaction.member.user.id === targetUser.id) {
+                    targetMember = interaction.member;
+                } else if (interaction.guild && interaction.guild.members) {
+                    try {
+                        targetMember = interaction.guild.members.cache.get(targetUser.id) || await interaction.guild.members.fetch(targetUser.id);
+                    } catch (err) {
+                        targetMember = interaction.member;
+                    }
+                }
+
+                // Detect member's primary/assigned clan
+                let assignedClan = null;
+                if (targetMember) {
+                    const detected = clanConfig.detectMemberClan(targetMember);
+                    if (detected.clan) {
+                        assignedClan = detected.clan;
+                    }
+                }
+
+                const clanStatuses = [];
+                for (const clan of Object.values(clanConfig.CLANS)) {
+                    let hasRole = false;
+                    if (targetMember && targetMember.roles && targetMember.roles.cache && typeof targetMember.roles.cache.has === 'function') {
+                        hasRole = targetMember.roles.cache.has(clan.roleId);
+                    } else if (targetMember && Array.isArray(targetMember.roles)) {
+                        hasRole = targetMember.roles.includes(clan.roleId);
+                    }
+
+                    const hasSubmitted = await clanProgressService.hasSubmittedToday(clan.id, targetUser.id, todayIST, targetUser.username);
+                    clanStatuses.push({
+                        clan,
+                        hasRole,
+                        hasSubmitted
+                    });
+                }
+
+                const primaryClan = assignedClan || (clanStatuses.find(s => s.hasRole)?.clan) || clanConfig.CLANS.aura7f;
+                const primaryStatus = clanStatuses.find(s => s.clan.id === primaryClan.id);
+
+                let dmSent = false;
+                let dmError = null;
+                let reminderMsg = null;
+
+                if (primaryStatus && !primaryStatus.hasSubmitted) {
+                    reminderMsg = clanReminderService.formatReminderMessage(primaryClan);
+                    try {
+                        await targetUser.send(reminderMsg);
+                        dmSent = true;
+                    } catch (dmErr) {
+                        dmError = dmErr.message;
+                    }
+                }
+
+                const embed = new EmbedBuilder()
+                    .setColor(primaryStatus?.hasSubmitted ? '#00FF7F' : (dmSent ? '#5865F2' : '#ED4245'))
+                    .setTitle(`🌟 [All Clans] Progress Check: ${targetUser.username}`)
+                    .setDescription(
+                        `Checked **${targetUser.username}** (<@${targetUser.id}>) across all 4 clans for **${todayIST}**.\n\n` +
+                        (primaryStatus?.hasSubmitted
+                            ? `✅ **Already submitted today's progress for ${primaryClan.name}!** No DM reminder needed.`
+                            : dmSent
+                                ? `📨 **DM reminder was sent to ${targetUser.toString()} for ${primaryClan.name}!**`
+                                : `❌ **Pending submission for ${primaryClan.name}, but DM failed:** ${dmError || 'DMs closed'}`)
+                    )
+                    .setTimestamp()
+                    .setFooter({ text: 'BashEye Multi-Clan Progress System' });
+
+                for (const status of clanStatuses) {
+                    const isAssigned = (assignedClan && status.clan.id === assignedClan.id) || status.hasRole;
+                    const statusText = status.hasSubmitted
+                        ? '✅ Submitted'
+                        : (isAssigned ? '⏳ Missing (Pending)' : '⚪ Not in Clan');
+
+                    embed.addFields({
+                        name: `🛡️ ${status.clan.name}`,
+                        value: `**Status:** ${statusText}\n**Channel:** <#${status.clan.progressChannelId}>\n**Role:** ${isAssigned ? 'Assigned' : 'None'}`,
+                        inline: true
+                    });
+                }
+
+                embed.addFields({
+                    name: '📬 DM Delivery Status',
+                    value: primaryStatus?.hasSubmitted
+                        ? '⏭️ Not Needed (Already submitted)'
+                        : (dmSent ? '✅ Delivered to user DMs' : `❌ Failed (${dmError || 'Closed DMs'})`),
+                    inline: false
+                });
+
+                if (reminderMsg && dmSent) {
+                    embed.addFields({
+                        name: '📝 Message Sent',
+                        value: `\`\`\`\n${reminderMsg}\n\`\`\``,
+                        inline: false
+                    });
+                }
+
+                return await interaction.editReply({ embeds: [embed] });
+            }
+
+            // Fetch target member context if available
+            let targetMember = null;
+            if (interaction.member && interaction.member.user && interaction.member.user.id === targetUser.id) {
+                targetMember = interaction.member;
+            } else if (interaction.guild && interaction.guild.members) {
+                try {
+                    targetMember = interaction.guild.members.cache.get(targetUser.id) || await interaction.guild.members.fetch(targetUser.id);
+                } catch (err) {
+                    targetMember = interaction.member;
+                }
+            }
+
+            // Resolve target clan for single clan check or punch
+            let targetClan = null;
+            let clanSource = 'role';
+            if (clanOption && !isAllClans) {
+                targetClan = clanConfig.getClanById(clanOption);
+                clanSource = 'option';
+            } else if (targetMember) {
+                const detected = clanConfig.detectMemberClan(targetMember);
+                if (detected.clan) {
+                    targetClan = detected.clan;
+                    clanSource = `role (${targetClan.name})`;
+                }
+            }
+
+            // Fallback to AURA 7F if user has no clan assigned yet
+            if (!targetClan) {
+                targetClan = clanConfig.CLANS.aura7f;
+                clanSource = 'default (AURA 7F)';
+            }
+
+            // 3. Optional test support for punch action if explicitly requested via code/options
+            if (action === 'punch') {
+                const pointsToAward = (customPoints !== null && customPoints !== undefined) ? customPoints : config.points.dailyAmount;
+
+                let memberId = null;
+                let currentStreak = 1;
+                try {
+                    memberId = await database.getMemberByDiscordUsername(targetUser.username);
+                    if (memberId) {
+                        const dateString = config.getTodayDateString();
+                        const description = `PU-${targetClan.id}-${dateString}`;
+                        await database.awardPoints(memberId, pointsToAward, description);
+                        if (customStreak !== null && customStreak !== undefined) {
+                            await database.updateDiscordStreak(memberId, customStreak);
+                            currentStreak = customStreak;
+                        } else {
+                            const streakInfo = await streakService.handleDailySubmission(memberId);
+                            currentStreak = streakInfo.currentStreak || 1;
+                        }
+                    } else if (customStreak !== null && customStreak !== undefined) {
+                        currentStreak = customStreak;
+                    }
+                } catch (dbErr) {
+                    console.warn('[ForcePunch] Database record warning:', dbErr.message);
+                    if (customStreak !== null && customStreak !== undefined) currentStreak = customStreak;
+                }
+
+                await clanProgressService.recordSubmission({
+                    userId: targetUser.id,
+                    username: targetUser.username,
+                    memberId: memberId,
+                    clanId: targetClan.id,
+                    clanName: targetClan.name,
+                    channelId: targetClan.progressChannelId,
+                    submissionDate: todayIST,
+                    pointsAwarded: pointsToAward,
+                    streak: currentStreak
+                });
+
+                const embed = new EmbedBuilder()
+                    .setColor('#00FF7F')
+                    .setTitle('🧪 [Force Punch] Progress Recorded')
+                    .setDescription(`Forced daily progress submission for ${targetUser.toString()} on **${todayIST}**.`)
+                    .addFields(
+                        { name: '👤 User', value: `${targetUser.username} (<@${targetUser.id}>)`, inline: true },
+                        { name: '🛡️ Clan', value: `${targetClan.name} *(${clanSource})*`, inline: true },
+                        { name: '📍 Progress Channel', value: `<#${targetClan.progressChannelId}>`, inline: true },
+                        { name: '💎 Points Awarded', value: `+${pointsToAward} pts`, inline: true },
+                        { name: '🔥 Current Streak', value: `${currentStreak} days`, inline: true },
+                        { name: '⚙️ Status', value: '✅ Completed & Saved', inline: true }
+                    )
+                    .setFooter({ text: 'BashEye Multi-Clan Progress Testing' })
+                    .setTimestamp();
+
+                return await interaction.editReply({ embeds: [embed] });
+            }
+
+            // 3. MAIN WORKFLOW: Check today's progress & send DM reminder if not submitted!
+            const hasSubmitted = await clanProgressService.hasSubmittedToday(targetClan.id, targetUser.id, todayIST, targetUser.username);
+
+            if (hasSubmitted) {
+                const embed = new EmbedBuilder()
+                    .setColor('#00FF7F')
+                    .setTitle('✅ [Daily Progress] Already Submitted')
+                    .setDescription(
+                        `**${targetUser.username}** (<@${targetUser.id}>) has **already submitted** today's progress for **${targetClan.name}** on **${todayIST}**.\n\n` +
+                        `✨ No DM reminder is needed because progress is already completed!`
+                    )
+                    .addFields(
+                        { name: '👤 Member', value: `${targetUser.username} (<@${targetUser.id}>)`, inline: true },
+                        { name: '🛡️ Clan', value: `${targetClan.name} *(${clanSource})*`, inline: true },
+                        { name: '📍 Progress Channel', value: `<#${targetClan.progressChannelId}>`, inline: true },
+                        { name: '📅 Date', value: todayIST, inline: true },
+                        { name: '📊 Progress Status', value: '✅ Completed Today', inline: true },
+                        { name: '📬 DM Reminder', value: '⏭️ Not Needed (Already submitted)', inline: true }
+                    )
+                    .setFooter({ text: 'Daily Progress & DM Reminder System' })
+                    .setTimestamp();
+
+                return await interaction.editReply({ embeds: [embed] });
+            } else {
+                const reminderMsg = clanReminderService.formatReminderMessage(targetClan);
+                let dmSuccess = false;
+                let dmError = null;
+
+                try {
+                    await targetUser.send(reminderMsg);
+                    dmSuccess = true;
+                } catch (dmErr) {
+                    dmError = dmErr.message;
+                }
+
+                const embed = new EmbedBuilder()
+                    .setColor(dmSuccess ? '#5865F2' : '#ED4245')
+                    .setTitle(dmSuccess ? '🔔 [DM Reminder] Sent Successfully' : '⚠️ [DM Reminder] Failed to Send')
+                    .setDescription(
+                        `**${targetUser.username}** (<@${targetUser.id}>) **has NOT submitted** today's progress for **${targetClan.name}** on **${todayIST}**.\n\n` +
+                        (dmSuccess
+                            ? `📨 **A DM reminder was sent to ${targetUser.toString()}!**`
+                            : `❌ **Could not send DM:** ${dmError}\n*(User may have DMs disabled or closed)*`)
+                    )
+                    .addFields(
+                        { name: '👤 Member', value: `${targetUser.username} (<@${targetUser.id}>)`, inline: true },
+                        { name: '🛡️ Clan', value: `${targetClan.name} *(${clanSource})*`, inline: true },
+                        { name: '📍 Progress Channel', value: `<#${targetClan.progressChannelId}>`, inline: true },
+                        { name: '📅 Date', value: todayIST, inline: true },
+                        { name: '📊 Progress Status', value: '⏳ Pending (Not Submitted)', inline: true },
+                        { name: '📬 DM Delivery', value: dmSuccess ? '✅ Delivered to user DMs' : `❌ Failed (${dmError})`, inline: true },
+                        { name: '📝 Message Sent', value: `\`\`\`\n${reminderMsg}\n\`\`\``, inline: false }
+                    )
+                    .setFooter({ text: 'Daily Progress & DM Reminder System' })
+                    .setTimestamp();
+
+                return await interaction.editReply({ embeds: [embed] });
+            }
+
+        } catch (error) {
+            console.error('Error in executeForcePuchCommand:', error);
+            await interaction.editReply({
+                content: `❌ Error checking progress & sending reminder: ${error.message}`
+            });
+        }
+    }
+
     // Get command data for registration
     getCommandData() {
         return Array.from(this.commands.values()).map(command => command.data.toJSON());
@@ -443,21 +863,31 @@ class SlashCommandHandler {
             return;
         }
 
+        console.log(`📩 Received /${interaction.commandName} from ${interaction.user.username}`);
+
         try {
             await command.execute(interaction);
             console.log(`✅ Executed /${interaction.commandName} for ${interaction.user.username}`);
         } catch (error) {
+            if (error.code === 10062) {
+                console.warn(`⚠️ Interaction /${interaction.commandName} timed out (Discord 10062).`);
+                return;
+            }
             console.error(`Error executing /${interaction.commandName}:`, error);
             
             const errorMessage = { 
                 content: '❌ There was an error while executing this command!', 
-                ephemeral: true 
+                flags: MessageFlags.Ephemeral 
             };
 
-            if (interaction.replied || interaction.deferred) {
-                await interaction.followUp(errorMessage);
-            } else {
-                await interaction.reply(errorMessage);
+            try {
+                if (interaction.replied || interaction.deferred) {
+                    await interaction.followUp(errorMessage);
+                } else {
+                    await interaction.reply(errorMessage);
+                }
+            } catch (err) {
+                // Ignore if interaction is expired
             }
         }
     }

@@ -12,19 +12,21 @@ async function deployCommands() {
     try {
         console.log(`🚀 Started refreshing ${commands.length} application (/) commands.`);
 
-        // The put method is used to fully refresh all commands in the guild with the current set
-        const data = await rest.put(
-            Routes.applicationGuildCommands(config.discord.clientId, config.discord.guildId),
-            { body: commands },
-        );
+        const guildIds = (config.discord.allowedGuildIds && config.discord.allowedGuildIds.length > 0)
+            ? config.discord.allowedGuildIds
+            : [config.discord.guildId].filter(Boolean);
 
-        console.log(`✅ Successfully reloaded ${data.length} application (/) commands.`);
-        
-        // Display registered commands
-        console.log('\n📋 Registered Commands:');
-        data.forEach(command => {
-            console.log(`  • /${command.name} - ${command.description}`);
-        });
+        for (const targetGuildId of guildIds) {
+            try {
+                const data = await rest.put(
+                    Routes.applicationGuildCommands(config.discord.clientId, targetGuildId),
+                    { body: commands },
+                );
+                console.log(`✅ Successfully reloaded ${data.length} commands for guild ${targetGuildId}.`);
+            } catch (guildErr) {
+                console.warn(`⚠️ Could not deploy commands to guild ${targetGuildId}:`, guildErr.message);
+            }
+        }
         
     } catch (error) {
         console.error('❌ Error deploying commands:', error);

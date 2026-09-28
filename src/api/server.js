@@ -199,7 +199,71 @@ class APIServer {
             });
         });
 
-        // Self-ping to prevent Render sleep (runs every 5 minutes)
+        // ── Clan Management & Progress Endpoints ──
+
+        // Get configured clans and progress channels
+        this.app.get('/clans', (req, res) => {
+            const clanConfig = require('../config/clanConfig');
+            res.json({
+                clans: clanConfig.CLANS,
+                progressChannels: clanConfig.getAllProgressChannelIds(),
+                reminders: config.reminders,
+                timestamp: new Date().toISOString()
+            });
+        });
+
+        // Get daily progress statistics for a specific clan
+        this.app.get('/clans/:clanId/stats', async (req, res) => {
+            try {
+                const clanProgressService = require('../services/clanProgressService');
+                const clanConfig = require('../config/clanConfig');
+                const { clanId } = req.params;
+                const date = req.query.date || null;
+
+                const clan = clanConfig.getClanById(clanId);
+                if (!clan) {
+                    return res.status(404).json({
+                        error: 'Clan not found',
+                        message: `No configured clan found with identifier: ${clanId}`
+                    });
+                }
+
+                const stats = await clanProgressService.getClanStats(clan.id, date);
+                res.json({
+                    clan,
+                    stats,
+                    timestamp: new Date().toISOString()
+                });
+            } catch (err) {
+                console.error('Error fetching clan stats:', err);
+                res.status(500).json({ error: 'Internal server error', message: err.message });
+            }
+        });
+
+        // Trigger clan reminders on-demand (e.g. for administrative testing)
+        this.app.post('/clans/reminders/trigger', async (req, res) => {
+            try {
+                const clanReminderService = require('../services/clanReminderService');
+                const discordClient = require('../bot/client');
+                const client = discordClient.getClient();
+
+                const dryRun = req.body.dryRun !== false; // Default to dryRun for safety
+                const specificClanId = req.body.clanId || null;
+                const specificUserId = req.body.userId || req.body.memberId || null;
+
+                const results = await clanReminderService.runReminders(client, { dryRun, specificClanId, specificUserId });
+                res.json({
+                    success: true,
+                    dryRun,
+                    results,
+                    timestamp: new Date().toISOString()
+                });
+            } catch (err) {
+                console.error('Error triggering clan reminders:', err);
+                res.status(500).json({ error: 'Internal server error', message: err.message });
+            }
+        });
+
         // Error handling middleware
         this.app.use((error, req, res, next) => {
             console.error('API Error:', error);
@@ -218,17 +282,23 @@ class APIServer {
         });
     }
 
-    start() {
+    start(port = config.server.port) {
         return new Promise((resolve, reject) => {
-            try {
-                this.server = this.app.listen(config.server.port, '0.0.0.0', () => {
-                    console.log(`🚀 API Server running on http://localhost:${config.server.port}`);
-                    resolve(this.server);
-                });
-            } catch (error) {
-                console.error('Failed to start API server:', error);
-                reject(error);
-            }
+            const server = this.app.listen(port, '0.0.0.0', () => {
+                this.server = server;
+                console.log(`🚀 API Server running on http://localhost:${port}`);
+                resolve(this.server);
+            });
+
+            server.on('error', (error) => {
+                if (error.code === 'EADDRINUSE') {
+                    console.warn(`⚠️ Port ${port} is already in use, trying port ${port + 1}...`);
+                    this.start(port + 1).then(resolve).catch(reject);
+                } else {
+                    console.error('Failed to start API server:', error);
+                    reject(error);
+                }
+            });
         });
     }
 

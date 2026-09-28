@@ -1,0 +1,88 @@
+{
+  "submissions": [
+    {
+      "id": "cp-1789484613546-p9uplmjcv",
+      "user_id": "user-dup-test",
+      "discord_username": "DuplicateTester",
+      "member_id": null,
+      "clan_id": "aura7f",
+      "clan_name": "AURA 7F",
+      "progress_channel_id": "1351223274750869554",
+      "submission_date": "2026-09-15",
+      "submission_status": "completed",
+      "points_awarded": 5,
+      "streak": 1,
+      "created_at": "2026-09-15T15:03:33.546Z"
+    },
+    {
+      "id": "cp-1789484615029-uzcwalubj",
+      "user_id": "user-aura-submitted",
+      "discord_username": "AuraDone",
+      "member_id": null,
+      "clan_id": "aura7f",
+      "clan_name": "AURA 7F",
+      "progress_channel_id": "1351223274750869554",
+      "submission_date": "2026-09-15",
+      "submission_status": "completed",
+      "points_awarded": 5,
+      "streak": 2,
+      "created_at": "2026-09-15T15:03:35.029Z"
+    },
+    {
+      "id": "cp-1789484615338-03d8tejka",
+      "user_id": "persisted-user-123",
+      "discord_username": "PersistentUser",
+      "member_id": null,
+      "clan_id": "belmont",
+      "clan_name": "BELMONT",
+      "progress_channel_id": "1351223371987161179",
+      "submission_date": "2026-09-25",
+      "submission_status": "completed",
+      "points_awarded": 5,
+      "streak": 4,
+      "created_at": "2026-09-15T15:03:35.338Z"
+    },
+    {
+      "id": "cp-1789484701411-y95jikk37",
+      "user_id": "test_user_123",
+      "discord_username": "testbasher",
+      "member_id": null,
+      "clan_id": "aura7f",
+      "clan_name": "AURA 7F",
+      "progress_channel_id": "1351223274750869554",
+      "submission_date": "2026-09-15",
+      "submission_status": "completed",
+      "points_awarded": 5,
+      "streak": 1,
+      "created_at": "2026-09-15T15:05:01.411Z"
+    },
+    {
+      "id": "cp-1790604432569-gbni894ht",
+      "user_id": "1308385757576036412",
+      "discord_username": "lifnan",
+      "member_id": 114,
+      "clan_id": "aura7f",
+      "clan_name": "AURA 7F",
+      "progress_channel_id": "1351223274750869554",
+      "submission_date": "2026-09-28",
+      "submission_status": "completed",
+      "points_awarded": 5,
+      "streak": 26,
+      "created_at": "2026-09-28T14:07:12.569Z"
+    },
+    {
+      "id": "cp-1790606443878-gtuvxayae",
+      "user_id": "1432715297953153045",
+      "discord_username": "anish_004.",
+      "member_id": 117,
+      "clan_id": "shadastria",
+      "clan_name": "SHADASTRIA",
+      "progress_channel_id": "1351223714355744828",
+      "submission_date": "2026-09-28",
+      "submission_status": "completed",
+      "points_awarded": 5,
+      "streak": 1,
+      "created_at": "2026-09-28T14:40:43.878Z"
+    }
+  ]
+}

@@ -2,6 +2,7 @@
 require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
+const clanConfig = require('./clanConfig');
 
 // Load meeting channels configuration from JSON
 function loadMeetingChannelsConfig() {
@@ -163,14 +164,15 @@ module.exports = {
     discord: {
         token: process.env.DISCORD_BOT_TOKEN,
         clientId: '1192867500875063346',
-        guildId: process.env.DISCORD_GUILD_ID,
-        basherProgressCategoryId: '1351223065354178722', // Basher Progress category ID
+        guildId: process.env.DISCORD_GUILD_ID || '1163002451746623528',
+        allowedGuildIds: process.env.ALLOWED_GUILD_IDS ? process.env.ALLOWED_GUILD_IDS.split(',').map(id => id.trim()) : ['1163002451746623528'],
+        basherProgressCategoryId: process.env.BASHER_PROGRESS_CATEGORY_ID || (process.env.TRACKED_CATEGORY_IDS ? process.env.TRACKED_CATEGORY_IDS.split(',')[0].trim() : '1351223065354178722'), // Basher Progress category ID
         categoryName: 'Basher Progress',
         organizerRoleId: process.env.ORGANIZER_ROLE_ID || '1163059730042851418'
     },
     supabase: {
         url: process.env.SUPABASE_URL,
-        key: process.env.SUPABASE_ANON_KEY
+        key: process.env.SUPABASE_ANON_KEY || process.env.SUPABASE_KEY
     },
     openrouter: {
         apiKey: process.env.OPENROUTER_API_KEY,
@@ -232,6 +234,16 @@ module.exports = {
             const enabledChannels = this.getEnabledChannels();
             return enabledChannels[index - 1] || null;
         }
+    },
+    // Clans configuration
+    clans: clanConfig.CLANS,
+    clanConfig: clanConfig,
+    reminders: {
+        // Daily DM reminder times in 24h format (IST)
+        times: process.env.CLAN_REMINDER_TIMES ? process.env.CLAN_REMINDER_TIMES.split(',').map(t => t.trim()) : ['21:00', '23:00'],
+        firstTime: process.env.FIRST_REMINDER_TIME || '21:00',
+        secondTime: process.env.SECOND_REMINDER_TIME || '23:00',
+        enabled: process.env.CLAN_REMINDERS_ENABLED !== 'false'
     },
     // Helper functions
     getTodayDateString,
