@@ -84,7 +84,7 @@ class MessageHandler {
             // Check if points already awarded today - silently ignore if already awarded (skip all validation)
             const dateString = config.getTodayDateString();
             const todayIST = config.getISTDateString();
-            const description = detectedClan ? `PU-${detectedClan.id}-${dateString}` : `PU-${dateString}`;
+            const description = `PU-${dateString}`;
             
             // NEW: Time constraint check (11am IST)
             const istHour = timeHelper.getIstHour();
@@ -96,7 +96,7 @@ class MessageHandler {
 
             // Duplicate check: check points table and clan progress store
             const alreadyAwardedPoints = await database.checkDailyPointsAwarded(memberId, description) ||
-                                         await database.checkDailyPointsAwarded(memberId, `PU-${dateString}`);
+                                         (detectedClan ? await database.checkDailyPointsAwarded(memberId, `PU-${detectedClan.id}-${dateString}`) : false);
             const alreadyAwardedClan = detectedClan
                 ? await clanProgressService.hasSubmittedToday(detectedClan.id, message.author.id, todayIST)
                 : false;

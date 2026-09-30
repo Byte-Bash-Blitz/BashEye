@@ -734,7 +734,7 @@ class SlashCommandHandler {
                     memberId = await database.getMemberByDiscordUsername(targetUser.username);
                     if (memberId) {
                         const dateString = config.getTodayDateString();
-                        const description = `PU-${targetClan.id}-${dateString}`;
+                        const description = `PU-${dateString}`;
                         await database.awardPoints(memberId, pointsToAward, description);
                         if (customStreak !== null && customStreak !== undefined) {
                             await database.updateDiscordStreak(memberId, customStreak);
