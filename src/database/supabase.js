@@ -665,5 +665,188 @@ class SupabaseService {
             return false;
         }
     }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Streak Freeze Operations (Monthly Freeze System)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    getStreakFreezeFilePath() {
+        const dir = path.join(__dirname, '../../data');
+        if (!fs.existsSync(dir)) {
+            fs.mkdirSync(dir, { recursive: true });
+        }
+        return path.join(dir, 'streak_freezes.json');
+    }
+
+    readStreakFreezeStore() {
+        try {
+            const filePath = this.getStreakFreezeFilePath();
+            if (fs.existsSync(filePath)) {
+                const data = fs.readFileSync(filePath, 'utf8');
+                return JSON.parse(data);
+            }
+        } catch (err) {
+            console.error('⚠️ Error reading streak_freezes.json store:', err.message);
+        }
+        return { freezes: [] };
+    }
+
+    writeStreakFreezeStore(store) {
+        try {
+            const filePath = this.getStreakFreezeFilePath();
+            fs.writeFileSync(filePath, JSON.stringify(store, null, 2), 'utf8');
+            return true;
+        } catch (err) {
+            console.error('⚠️ Error writing streak_freezes.json store:', err.message);
+            return false;
+        }
+    }
+
+    async getStreakFreeze(memberId, month, year) {
+        try {
+            const numMemberId = Number(memberId);
+            const numMonth = Number(month);
+            const numYear = Number(year);
+
+            // 1. Check local persistent store first
+            const store = this.readStreakFreezeStore();
+            const localRecord = store.freezes.find(
+                f => Number(f.member_id) === numMemberId && Number(f.month) === numMonth && Number(f.year) === numYear
+            );
+
+            // 2. Try querying Supabase streak_freezes table
+            try {
+                const client = await this.getClient();
+                if (client) {
+                    const { data, error } = await client
+                        .from('streak_freezes')
+                        .select('*')
+                        .eq('member_id', numMemberId)
+                        .eq('month', numMonth)
+                        .eq('year', numYear)
+                        .maybeSingle();
+
+                    if (!error && data) {
+                        return data;
+                    }
+                }
+            } catch (err) {
+                // Ignore remote query error; fall back to local
+            }
+
+            return localRecord || null;
+        } catch (error) {
+            console.error('Error in getStreakFreeze:', error);
+            return null;
+        }
+    }
+
+    async recordStreakFreeze(freezeData) {
+        try {
+            const record = {
+                id: freezeData.id || `sf-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+                member_id: Number(freezeData.memberId !== undefined ? freezeData.memberId : freezeData.member_id),
+                month: Number(freezeData.month),
+                year: Number(freezeData.year),
+                status: freezeData.status || 'available',
+                used_on: freezeData.usedOn || freezeData.used_on || null,
+                protected_streak: freezeData.protectedStreak !== undefined ? Number(freezeData.protectedStreak) : null,
+                created_at: freezeData.createdAt || freezeData.created_at || new Date().toISOString(),
+                updated_at: new Date().toISOString()
+            };
+
+            // 1. Update persistent local store
+            const store = this.readStreakFreezeStore();
+            const existingIdx = store.freezes.findIndex(
+                f => Number(f.member_id) === record.member_id && Number(f.month) === record.month && Number(f.year) === record.year
+            );
+            if (existingIdx >= 0) {
+                store.freezes[existingIdx] = { ...store.freezes[existingIdx], ...record };
+            } else {
+                store.freezes.push(record);
+            }
+            this.writeStreakFreezeStore(store);
+
+            // 2. Try recording to Supabase streak_freezes table
+            try {
+                const client = await this.getClient(true).catch(() => this.getClient());
+                if (client) {
+                    const { data, error } = await client
+                        .from('streak_freezes')
+                        .upsert(record, { onConflict: 'member_id,month,year' })
+                        .select()
+                        .maybeSingle();
+
+                    if (!error && data) {
+                        return data;
+                    }
+                }
+            } catch (err) {
+                // Table might not exist or network issue; local store already holds it
+            }
+
+            return record;
+        } catch (error) {
+            console.error('Error in recordStreakFreeze:', error);
+            return null;
+        }
+    }
+
+    async isDateProtectedByFreeze(memberId, dateString) {
+        try {
+            const numMemberId = Number(memberId);
+
+            // Check local store
+            const store = this.readStreakFreezeStore();
+            const foundLocal = store.freezes.some(
+                f => Number(f.member_id) === numMemberId && f.status === 'used' && f.used_on === dateString
+            );
+            if (foundLocal) return true;
+
+            // Check Supabase table
+            try {
+                const client = await this.getClient();
+                if (client) {
+                    const { data, error } = await client
+                        .from('streak_freezes')
+                        .select('id')
+                        .eq('member_id', numMemberId)
+                        .eq('status', 'used')
+                        .eq('used_on', dateString)
+                        .limit(1);
+
+                    if (!error && data && data.length > 0) {
+                        return true;
+                    }
+                }
+            } catch (err) {
+                // Ignore remote query error
+            }
+
+            return false;
+        } catch (error) {
+            console.error('Error in isDateProtectedByFreeze:', error);
+            return false;
+        }
+    }
+
+    async getActiveStreakMembers() {
+        try {
+            const client = await this.getClient();
+            const { data, error } = await client
+                .from('member_stats')
+                .select('member_id, discord_streak, last_updated_at')
+                .gt('discord_streak', 0);
+
+            if (error) {
+                console.error('Error fetching active streak members from Supabase:', error);
+                return [];
+            }
+            return data || [];
+        } catch (error) {
+            console.error('Error in getActiveStreakMembers:', error);
+            return [];
+        }
+    }
 }
 module.exports = new SupabaseService();
