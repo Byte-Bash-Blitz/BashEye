@@ -1,6 +1,8 @@
 // src/services/streakService.js
 const database = require('../database/supabase');
 const config = require('../config/config');
+const streakFreezeService = require('./streakFreezeService');
+const streakFreezeUtils = require('../utils/streakFreezeUtils');
 
 class StreakService {
     constructor() {
@@ -52,8 +54,19 @@ class StreakService {
                     // Already submitted today (should be blocked by messageHandler, but just in case)
                     newStreak = oldStreak;
                     console.log(`📅 Member ${memberId}: Duplicate post today. Streak stays at ${newStreak}`);
+                } else if (daysDiff === 2) {
+                    // Check if yesterday was protected by a Streak Freeze
+                    const yesterdayIST = streakFreezeUtils.getYesterdayIST(todayIST);
+                    const isFrozen = await streakFreezeService.isDateProtected(memberId, yesterdayIST);
+                    if (isFrozen) {
+                        newStreak = oldStreak + 1;
+                        console.log(`🛡️ Member ${memberId}: Yesterday was protected by Streak Freeze. Streak ${oldStreak} → ${newStreak}`);
+                    } else {
+                        newStreak = 1;
+                        console.log(`❌ Member ${memberId}: Missed 1 day without freeze. Streak reset to 1 (was ${oldStreak})`);
+                    }
                 } else {
-                    // Missed one or more days — reset
+                    // Missed more than one day — reset
                     newStreak = 1;
                     console.log(`❌ Member ${memberId}: Missed ${daysDiff - 1} day(s). Streak reset to 1 (was ${oldStreak})`);
                 }

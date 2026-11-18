@@ -59,6 +59,15 @@ class DiscordClient {
             } catch (error) {
                 console.error('❌ Failed to initialize Clan DM reminder scheduler:', error);
             }
+
+            // Initialize streak freeze service
+            console.log('🛡️ Initializing Monthly Streak Freeze Service...');
+            try {
+                const streakFreezeService = require('../services/streakFreezeService');
+                streakFreezeService.initialize(this.client);
+            } catch (error) {
+                console.error('❌ Failed to initialize Streak Freeze Service:', error);
+            }
         });
 
         this.client.on('messageCreate', async (message) => {
@@ -119,6 +128,12 @@ class DiscordClient {
             try {
                 const clanReminderService = require('../services/clanReminderService');
                 clanReminderService.stop();
+            } catch (err) {
+                // Ignore if not initialized
+            }
+            try {
+                const streakFreezeService = require('../services/streakFreezeService');
+                streakFreezeService.stop();
             } catch (err) {
                 // Ignore if not initialized
             }
